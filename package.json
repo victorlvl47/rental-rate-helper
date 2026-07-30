@@ -1,0 +1,15 @@
+{
+  "name": "rental-rate-helper",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "pnpm --recursive --filter '!rental-rate-helper' --parallel --if-present run dev",
+    "build": "pnpm --recursive --filter '!rental-rate-helper' --if-present run build",
+    "typecheck": "pnpm --recursive --filter '!rental-rate-helper' --if-present run typecheck"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "packageManager": "pnpm@10.15.0"
+}
