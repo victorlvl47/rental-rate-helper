@@ -1,0 +1,84 @@
+services:
+  postgresql:
+    image: postgres:16.10
+    environment:
+      POSTGRES_USER: rental_rate_helper
+      POSTGRES_PASSWORD: rental_rate_helper_local
+      POSTGRES_DB: rental_rate_helper
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rental_rate_helper -d rental_rate_helper"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  temporal-schema:
+    image: temporalio/admin-tools:1.31.0
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: rental_rate_helper
+      POSTGRES_PWD: rental_rate_helper_local
+      SQL_PASSWORD: rental_rate_helper_local
+      POSTGRES_SEEDS: postgresql
+    volumes:
+      - ./infrastructure/temporal/scripts:/scripts:ro
+    entrypoint: ["/bin/sh"]
+    command: /scripts/setup-postgres.sh
+
+  temporal:
+    image: temporalio/server:1.31.0
+    depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: rental_rate_helper
+      POSTGRES_PWD: rental_rate_helper_local
+      POSTGRES_SEEDS: postgresql
+      BIND_ON_IP: 0.0.0.0
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - "127.0.0.1:7233:7233"
+    volumes:
+      - ./infrastructure/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+
+  temporal-create-namespace:
+    image: temporalio/admin-tools:1.31.0
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      DEFAULT_NAMESPACE: default
+    volumes:
+      - ./infrastructure/temporal/scripts:/scripts:ro
+    entrypoint: ["/bin/sh"]
+    command: /scripts/create-namespace.sh
+
+  temporal-ui:
+    image: temporalio/ui:2.49.1
+    depends_on:
+      temporal-create-namespace:
+        condition: service_completed_successfully
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    ports:
+      - "127.0.0.1:8233:8080"
+
+volumes:
+  postgresql_data:
