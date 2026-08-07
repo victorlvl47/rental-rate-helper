@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
+    "database": "workspace:*",
     "fastify": "^5.11.2"
   },
   "devDependencies": {

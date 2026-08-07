@@ -37,8 +37,37 @@ Next.js web:   http://localhost:3000
 ```
 
 The local application database is `rental_rate_helper`. The Compose configuration
-uses development-only credentials and a future connection string follows this form:
-`postgresql://rental_rate_helper:rental_rate_helper_local@localhost:5433/rental_rate_helper`.
+uses development-only credentials. Configure the API and database tooling from the
+repository root:
+
+```bash
+cp .env.example .env
+```
+
+This sets `DATABASE_URL` to the local PostgreSQL instance. The real `.env` file is
+ignored by Git. To run the API and confirm PostgreSQL connectivity:
+
+```bash
+pnpm --filter api dev
+curl http://localhost:8080/health
+```
+
+The healthy response is:
+
+```json
+{
+  "status": "ok",
+  "service": "rental-rate-helper-api",
+  "database": "connected"
+}
+```
+
+When schemas are added in a future issue, generate and apply migrations with:
+
+```bash
+pnpm --filter database db:generate
+pnpm --filter database db:migrate
+```
 
 `docker compose down` stops and removes containers while preserving the named
 PostgreSQL volume. `docker compose down -v` also deletes that volume and its data.
