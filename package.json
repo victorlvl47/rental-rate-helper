@@ -4,9 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "pnpm --recursive --filter '!rental-rate-helper' --parallel --if-present run dev",
-    "build": "pnpm --recursive --filter '!rental-rate-helper' --if-present run build",
-    "typecheck": "pnpm --recursive --filter '!rental-rate-helper' --if-present run typecheck"
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "dev": "pnpm --filter database build && pnpm --parallel --filter web --filter api --filter worker run dev",
+    "build": "pnpm --filter shared build && pnpm --filter database build && pnpm --filter api build && pnpm --filter worker build && pnpm --filter web build",
+    "typecheck": "pnpm --recursive --filter '!rental-rate-helper' --if-present run typecheck",
+    "temporal:smoke": "pnpm --filter worker build && pnpm --filter worker temporal:smoke"
   },
   "keywords": [],
   "author": "",
