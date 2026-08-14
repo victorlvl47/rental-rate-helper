@@ -122,7 +122,7 @@ connection error naming the configured Temporal address. Start or restart the
 infrastructure with `pnpm infra:up`, wait for `docker compose ps` to show
 healthy/completed setup services, then rerun the worker or smoke command.
 
-## Build, checks, and future migrations
+## Build, checks, migrations, and sample data
 
 ```bash
 pnpm build
@@ -136,7 +136,13 @@ pnpm --filter database db:generate
 pnpm --filter database db:migrate
 ```
 
-No schema migrations are needed for Epic 1.
+With PostgreSQL running and migrations applied, load the deterministic local MVP sample data with:
+
+```bash
+pnpm --filter database db:seed
+```
+
+The seed inserts clearly fake data for local development only: it includes all four MVP markets, uses USD prices, and is safe to rerun. Repeated runs update the known sample properties and market signals instead of creating duplicates.
 
 ## Stopping local services
 
