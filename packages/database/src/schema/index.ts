@@ -7,9 +7,9 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  text,
   unique,
   uuid,
-  varchar,
 } from 'drizzle-orm/pg-core';
 
 export const rentalMarketEnum = pgEnum('rental_market', [
@@ -23,7 +23,7 @@ export const properties = pgTable(
   'properties',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    name: varchar('name', { length: 255 }).notNull(),
+    name: text('name').notNull(),
     city: rentalMarketEnum('city').notNull(),
     base_price: numeric('base_price', { precision: 10, scale: 2 }).notNull(),
     min_price: numeric('min_price', { precision: 10, scale: 2 }).notNull(),

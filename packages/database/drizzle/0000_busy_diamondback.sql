@@ -15,7 +15,7 @@ CREATE TABLE "market_signals" (
 --> statement-breakpoint
 CREATE TABLE "properties" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"name" varchar(255) NOT NULL,
+	"name" text NOT NULL,
 	"city" "rental_market" NOT NULL,
 	"base_price" numeric(10, 2) NOT NULL,
 	"min_price" numeric(10, 2) NOT NULL,
