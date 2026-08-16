@@ -1,0 +1,257 @@
+{
+  "id": "3cb110de-2a2e-4242-9b74-67d5f45fa4f4",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.market_signals": {
+      "name": "market_signals",
+      "schema": "",
+      "columns": {
+        "property_id": {
+          "name": "property_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "competitor_avg_price": {
+          "name": "competitor_avg_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "local_event_score": {
+          "name": "local_event_score",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "seasonality_score": {
+          "name": "seasonality_score",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "demand_score": {
+          "name": "demand_score",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "market_signals_property_id_properties_id_fk": {
+          "name": "market_signals_property_id_properties_id_fk",
+          "tableFrom": "market_signals",
+          "tableTo": "properties",
+          "columnsFrom": [
+            "property_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "market_signals_property_id_date_unique": {
+          "name": "market_signals_property_id_date_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "property_id",
+            "date"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "market_signals_competitor_avg_price_nonnegative": {
+          "name": "market_signals_competitor_avg_price_nonnegative",
+          "value": "\"market_signals\".\"competitor_avg_price\" >= 0"
+        },
+        "market_signals_local_event_score_range": {
+          "name": "market_signals_local_event_score_range",
+          "value": "\"market_signals\".\"local_event_score\" BETWEEN 0 AND 1"
+        },
+        "market_signals_seasonality_score_range": {
+          "name": "market_signals_seasonality_score_range",
+          "value": "\"market_signals\".\"seasonality_score\" BETWEEN 0 AND 1"
+        },
+        "market_signals_demand_score_range": {
+          "name": "market_signals_demand_score_range",
+          "value": "\"market_signals\".\"demand_score\" BETWEEN 0 AND 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.properties": {
+      "name": "properties",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "city": {
+          "name": "city",
+          "type": "rental_market",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_price": {
+          "name": "base_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_price": {
+          "name": "min_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_price": {
+          "name": "max_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bedrooms": {
+          "name": "bedrooms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bathrooms": {
+          "name": "bathrooms",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_guests": {
+          "name": "max_guests",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_occupancy_rate": {
+          "name": "current_occupancy_rate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target_occupancy_rate": {
+          "name": "target_occupancy_rate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "properties_city_idx": {
+          "name": "properties_city_idx",
+          "columns": [
+            {
+              "expression": "city",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "properties_base_price_nonnegative": {
+          "name": "properties_base_price_nonnegative",
+          "value": "\"properties\".\"base_price\" >= 0"
+        },
+        "properties_min_price_nonnegative": {
+          "name": "properties_min_price_nonnegative",
+          "value": "\"properties\".\"min_price\" >= 0"
+        },
+        "properties_max_price_nonnegative": {
+          "name": "properties_max_price_nonnegative",
+          "value": "\"properties\".\"max_price\" >= 0"
+        },
+        "properties_bedrooms_nonnegative": {
+          "name": "properties_bedrooms_nonnegative",
+          "value": "\"properties\".\"bedrooms\" >= 0"
+        },
+        "properties_bathrooms_nonnegative": {
+          "name": "properties_bathrooms_nonnegative",
+          "value": "\"properties\".\"bathrooms\" >= 0"
+        },
+        "properties_max_guests_positive": {
+          "name": "properties_max_guests_positive",
+          "value": "\"properties\".\"max_guests\" >= 1"
+        },
+        "properties_current_occupancy_rate_range": {
+          "name": "properties_current_occupancy_rate_range",
+          "value": "\"properties\".\"current_occupancy_rate\" BETWEEN 0 AND 1"
+        },
+        "properties_target_occupancy_rate_range": {
+          "name": "properties_target_occupancy_rate_range",
+          "value": "\"properties\".\"target_occupancy_rate\" BETWEEN 0 AND 1"
+        },
+        "properties_min_price_lte_base_price": {
+          "name": "properties_min_price_lte_base_price",
+          "value": "\"properties\".\"min_price\" <= \"properties\".\"base_price\""
+        },
+        "properties_base_price_lte_max_price": {
+          "name": "properties_base_price_lte_max_price",
+          "value": "\"properties\".\"base_price\" <= \"properties\".\"max_price\""
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.rental_market": {
+      "name": "rental_market",
+      "schema": "public",
+      "values": [
+        "New York",
+        "Las Vegas",
+        "Guatemala City",
+        "Toronto"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

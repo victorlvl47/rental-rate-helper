@@ -1,1 +1,13 @@
 export type Identifier = string;
+
+export {
+  calendarDateSchema,
+  marketSignalSchema,
+  MVP_CURRENCY,
+  propertySchema,
+  RENTAL_MARKETS,
+  rentalMarketSchema,
+  usdAmountSchema,
+} from './rental-market.js';
+
+export type { MarketSignal, Property, RentalMarket } from './rental-market.js';

@@ -122,21 +122,151 @@ connection error naming the configured Temporal address. Start or restart the
 infrastructure with `pnpm infra:up`, wait for `docker compose ps` to show
 healthy/completed setup services, then rerun the worker or smoke command.
 
-## Build, checks, and future migrations
+## Build, checks, migrations, and sample data
 
 ```bash
 pnpm build
 pnpm typecheck
 ```
 
-When a later issue adds Drizzle schemas, generate and apply migrations with:
+When a database schema change requires a migration, generate and apply it with:
 
 ```bash
 pnpm --filter database db:generate
 pnpm --filter database db:migrate
 ```
 
-No schema migrations are needed for Epic 1.
+With PostgreSQL running and migrations applied, load the deterministic local MVP sample data with:
+
+```bash
+pnpm --filter database db:seed
+```
+
+The seed inserts clearly fake data for local development only: it includes all four MVP markets, uses USD prices, and is safe to rerun. Repeated runs update the known sample properties and market signals instead of creating duplicates.
+
+## Epic 2 market-data flow
+
+Epic 2 adds read-only, fake rental market data for local MVP development. It
+does not generate pricing recommendations.
+
+### Prerequisites and local configuration
+
+Install Node.js 20 or later, pnpm 10.15.0, Docker, and Docker Compose. Docker
+must be running and your user must have permission to use `docker compose`.
+PostgreSQL must be available before migrations, seeding, `/health`, or the
+market-data API routes can work.
+
+Create the local environment file from the tracked template; do not commit it:
+
+```bash
+cp .env.example .env
+```
+
+For the default local setup, `.env.example` configures PostgreSQL on port 5433
+and the API on port 8080. Keep credentials local; use different values in your
+own `.env` when needed.
+
+### Start, migrate, seed, and run the API
+
+From the repository root, run the commands in this order:
+
+```bash
+pnpm infra:up
+pnpm --filter database db:migrate
+pnpm --filter database db:seed
+pnpm --filter api dev
+```
+
+`pnpm infra:up` starts the local Docker services, including PostgreSQL. Run
+migrations before seeding. The seed contains eight fixed fake properties and
+sixteen fake market signals: at least two properties for each supported market.
+It is safe to rerun `pnpm --filter database db:seed`; known fixed records are
+updated rather than duplicated.
+
+The API listens at `http://localhost:8080` by default (the `API_PORT` value in
+`.env`). Start it in a separate terminal with `pnpm --filter api dev` after the
+database has been migrated and seeded.
+
+### Data rules
+
+The only supported markets are:
+
+- New York
+- Las Vegas
+- Guatemala City
+- Toronto
+
+All prices are USD-only JSON numbers. Dates are calendar dates in `YYYY-MM-DD`
+format. PostgreSQL numeric values are converted and validated by the API, so
+clients receive JSON numbers rather than numeric strings.
+
+### Read-only API examples
+
+With the API running at `http://localhost:8080`, use these requests:
+
+```bash
+curl -i http://localhost:8080/health
+curl -i http://localhost:8080/markets
+curl -i 'http://localhost:8080/properties?city=New%20York'
+curl -i 'http://localhost:8080/properties?city=Las%20Vegas'
+curl -i 'http://localhost:8080/properties?city=Guatemala%20City'
+curl -i 'http://localhost:8080/properties?city=Toronto'
+curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/market-signals
+```
+
+`10000000-0000-4000-8000-000000000001` is the fixed ID for the seeded Sample
+Harbor Studio property. Its market signals are returned in ascending date order.
+
+| Scenario | Expected response |
+| --- | --- |
+| Missing `city` | `400` |
+| Unsupported `city` | `400` |
+| Invalid property UUID | `400` |
+| Unknown valid property UUID | `404` |
+| Valid city with no properties | `200` with `[]` |
+| Existing property with no signals | `200` with `[]` |
+| Database unavailable | `503` |
+
+### Safe empty-database migration verification
+
+Never reset, truncate, or drop the normal `rental_rate_helper` development
+database to test migrations. With PostgreSQL running, use this explicitly named
+temporary database instead:
+
+These commands use the default `.env.example` credentials and port; if you
+changed your local PostgreSQL settings, replace them with your own `.env`
+values.
+
+```bash
+docker compose exec -T postgresql createdb -U rental_rate_helper rental_rate_helper_issue12_verify
+DATABASE_URL=postgresql://rental_rate_helper:rental_rate_helper_local@localhost:5433/rental_rate_helper_issue12_verify pnpm --filter database db:migrate
+docker compose exec -T postgresql psql -U rental_rate_helper -d rental_rate_helper_issue12_verify -c '\dt'
+```
+
+After confirming the migration tables and expected application tables exist,
+remove only that named verification database. First print the exact target, then
+run the drop command:
+
+```bash
+printf '%s\n' 'Removing only temporary database: rental_rate_helper_issue12_verify'
+docker compose exec -T postgresql dropdb -U rental_rate_helper rental_rate_helper_issue12_verify
+```
+
+This empty database can also safely verify that a valid market returns `[]`.
+Point a separate API process at it with an explicit `DATABASE_URL` and a
+different `API_PORT`; do not repoint or alter the normal seeded database.
+
+### Epic 2 smoke-test checklist
+
+- [ ] PostgreSQL is running (`pnpm infra:up` and `docker compose ps`).
+- [ ] Migrations succeed on the explicitly named empty verification database.
+- [ ] The normal database migrates, then `db:seed` succeeds twice with no duplicate fixed IDs or `(property_id, date)` pairs.
+- [ ] `/health` reports a connected database and `/markets` returns all four markets.
+- [ ] Each supported city returns its seeded properties.
+- [ ] A seeded property returns date-ascending signals with JSON numeric prices and `YYYY-MM-DD` dates.
+- [ ] Missing/unsupported cities, invalid UUIDs, and unknown UUIDs return the documented statuses.
+- [ ] Valid empty results and database-failure behavior are covered by API tests; manually verify them with the temporary database only when safe.
+- [ ] `pnpm build`, `pnpm typecheck`, `pnpm --filter shared test`, `pnpm --filter api test`, and `git diff --check` pass.
 
 ## Stopping local services
 
