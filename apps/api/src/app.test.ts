@@ -1,5 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { marketSignalSchema, propertySchema, RENTAL_MARKETS, type MarketSignal, type Property } from 'shared';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  marketSignalSchema,
+  propertySchema,
+  RENTAL_MARKETS,
+  ruleBasedPricingResultSchema,
+  type MarketSignal,
+  type Property,
+} from 'shared';
 import { createApp } from './app.js';
 import type { RentalDataRepository } from './rental-data-repository.js';
 
@@ -158,5 +165,117 @@ describe('rental market data routes', () => {
     expect(response.statusCode).toBe(503);
     expect(response.body).not.toContain('secret');
     expect(response.body).not.toContain('postgresql');
+  });
+});
+
+describe('pricing preview route', () => {
+  it('returns a schema-valid, cents-rounded pricing preview for a known property', async () => {
+    const response = await createTestApp().inject({
+      method: 'GET',
+      url: `/properties/${property.id}/pricing-preview`,
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(ruleBasedPricingResultSchema.parse(body)).toEqual(body);
+    expect(body).toMatchObject({
+      property_id: property.id,
+      signal_count: signals.length,
+      market_signals_used: true,
+    });
+    expect(body.adjustments).toBeDefined();
+
+    for (const price of [
+      body.minimum_recommended_price,
+      body.recommended_price,
+      body.maximum_recommended_price,
+    ]) {
+      expect(typeof price).toBe('number');
+      expect(price).toBeGreaterThanOrEqual(property.min_price);
+      expect(price).toBeLessThanOrEqual(property.max_price);
+      expect(price * 100).toBeCloseTo(Math.round(price * 100), 8);
+    }
+  });
+
+  it('rejects an invalid property ID and returns 404 for an unknown valid ID', async () => {
+    const app = createTestApp();
+
+    expect((await app.inject({ method: 'GET', url: '/properties/not-a-uuid/pricing-preview' })).statusCode).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/properties/10000000-0000-4000-8000-000000000099/pricing-preview',
+        })
+      ).statusCode,
+    ).toBe(404);
+  });
+
+  it('uses the occupancy-only fallback when an existing property has no signals', async () => {
+    const response = await createTestApp({ listMarketSignals: async () => [] }).inject({
+      method: 'GET',
+      url: `/properties/${property.id}/pricing-preview`,
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(ruleBasedPricingResultSchema.parse(body)).toEqual(body);
+    expect(body.signal_count).toBe(0);
+    expect(body.market_signals_used).toBe(false);
+  });
+
+  it('returns a safe 503 when loading the property fails', async () => {
+    const response = await createTestApp({
+      findPropertyById: async () => {
+        throw new Error('postgresql://username:secret@host/database');
+      },
+    }).inject({ method: 'GET', url: `/properties/${property.id}/pricing-preview` });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).not.toContain('secret');
+    expect(response.body).not.toContain('postgresql');
+  });
+
+  it('returns a safe 503 when loading signals fails', async () => {
+    const response = await createTestApp({
+      listMarketSignals: async () => {
+        throw new Error('postgresql://username:secret@host/database');
+      },
+    }).inject({ method: 'GET', url: `/properties/${property.id}/pricing-preview` });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).not.toContain('secret');
+    expect(response.body).not.toContain('postgresql');
+  });
+
+  it('returns a safe 503 when repository data cannot produce a valid pricing result', async () => {
+    const response = await createTestApp({
+      listMarketSignals: async () => [
+        { ...signals[0], property_id: '10000000-0000-4000-8000-000000000099' },
+      ],
+    }).inject({ method: 'GET', url: `/properties/${property.id}/pricing-preview` });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: 'Service unavailable.' });
+  });
+
+  it('only uses repository read methods', async () => {
+    const findPropertyById = vi.fn(repository.findPropertyById);
+    const listMarketSignals = vi.fn(repository.listMarketSignals);
+    const writePricingRecommendation = vi.fn();
+    const repositoryWithWriteSpy = {
+      findPropertyById,
+      listMarketSignals,
+      writePricingRecommendation,
+    };
+    const response = await createTestApp(repositoryWithWriteSpy).inject({
+      method: 'GET',
+      url: `/properties/${property.id}/pricing-preview`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(findPropertyById).toHaveBeenCalledWith(property.id);
+    expect(listMarketSignals).toHaveBeenCalledWith(property.id);
+    expect(writePricingRecommendation).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import cors from '@fastify/cors';
 import { checkDatabaseConnection, closeDatabase } from 'database';
 import Fastify from 'fastify';
 import { propertySchema, RENTAL_MARKETS, rentalMarketSchema } from 'shared';
+import { calculateRuleBasedPricing } from './pricing/rule-based-pricing.js';
 import { createRentalDataRepository, type RentalDataRepository } from './rental-data-repository.js';
 
 export interface ApiDependencies {
@@ -96,6 +97,36 @@ export function createApp(options: CreateAppOptions = {}) {
         app.log.error(
           { databaseError: { name: getErrorName(error), ...(code ? { code } : {}) } },
           'Market signal query failed',
+        );
+        return reply.code(503).send({ error: 'Service unavailable.' });
+      }
+    },
+  );
+
+  app.get<{ Params: { propertyId: string } }>(
+    '/properties/:propertyId/pricing-preview',
+    async (request, reply) => {
+      const parsedPropertyId = propertyIdSchema.safeParse(request.params.propertyId);
+
+      if (!parsedPropertyId.success) {
+        return reply.code(400).send({ error: 'Invalid property ID.' });
+      }
+
+      try {
+        const property = await dependencies.rentalDataRepository.findPropertyById(parsedPropertyId.data);
+
+        if (property === undefined) {
+          return reply.code(404).send({ error: 'Property not found.' });
+        }
+
+        const signals = await dependencies.rentalDataRepository.listMarketSignals(parsedPropertyId.data);
+
+        return calculateRuleBasedPricing(property, signals);
+      } catch (error) {
+        const code = getErrorCode(error);
+        app.log.error(
+          { databaseError: { name: getErrorName(error), ...(code ? { code } : {}) } },
+          'Pricing preview query failed',
         );
         return reply.code(503).send({ error: 'Service unavailable.' });
       }

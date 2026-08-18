@@ -212,6 +212,7 @@ curl -i 'http://localhost:8080/properties?city=Las%20Vegas'
 curl -i 'http://localhost:8080/properties?city=Guatemala%20City'
 curl -i 'http://localhost:8080/properties?city=Toronto'
 curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/market-signals
+curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-preview
 ```
 
 `10000000-0000-4000-8000-000000000001` is the fixed ID for the seeded Sample
