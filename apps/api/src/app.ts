@@ -1,7 +1,9 @@
 import cors from '@fastify/cors';
 import { checkDatabaseConnection, closeDatabase } from 'database';
 import Fastify from 'fastify';
-import { propertySchema, RENTAL_MARKETS, rentalMarketSchema } from 'shared';
+import { aiPricingPreviewResponseSchema, propertySchema, RENTAL_MARKETS, rentalMarketSchema } from 'shared';
+import type { AiPricingProvider } from './ai/ai-pricing-provider.js';
+import { createAiPricingProvider } from './ai/config.js';
 import { calculateRuleBasedPricing } from './pricing/rule-based-pricing.js';
 import { createRentalDataRepository, type RentalDataRepository } from './rental-data-repository.js';
 
@@ -9,6 +11,8 @@ export interface ApiDependencies {
   checkDatabaseConnection: () => Promise<void>;
   closeDatabase: () => Promise<void>;
   rentalDataRepository: RentalDataRepository;
+  aiPricingProvider: AiPricingProvider;
+  calculateRuleBasedPricing: typeof calculateRuleBasedPricing;
 }
 
 interface CreateAppOptions extends Partial<ApiDependencies> {
@@ -19,6 +23,14 @@ const defaultDependencies: ApiDependencies = {
   checkDatabaseConnection,
   closeDatabase,
   rentalDataRepository: createRentalDataRepository(),
+  // Resolve configuration only when the AI route is called, so a bad OpenAI
+  // configuration cannot prevent unrelated routes from starting or handling requests.
+  aiPricingProvider: {
+    getRecommendation(ruleBasedPricing) {
+      return createAiPricingProvider().getRecommendation(ruleBasedPricing);
+    },
+  },
+  calculateRuleBasedPricing,
 };
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -121,12 +133,47 @@ export function createApp(options: CreateAppOptions = {}) {
 
         const signals = await dependencies.rentalDataRepository.listMarketSignals(parsedPropertyId.data);
 
-        return calculateRuleBasedPricing(property, signals);
+        return dependencies.calculateRuleBasedPricing(property, signals);
       } catch (error) {
         const code = getErrorCode(error);
         app.log.error(
           { databaseError: { name: getErrorName(error), ...(code ? { code } : {}) } },
           'Pricing preview query failed',
+        );
+        return reply.code(503).send({ error: 'Service unavailable.' });
+      }
+    },
+  );
+
+  app.get<{ Params: { propertyId: string } }>(
+    '/properties/:propertyId/ai-pricing-preview',
+    async (request, reply) => {
+      const parsedPropertyId = propertyIdSchema.safeParse(request.params.propertyId);
+
+      if (!parsedPropertyId.success) {
+        return reply.code(400).send({ error: 'Invalid property ID.' });
+      }
+
+      try {
+        const property = await dependencies.rentalDataRepository.findPropertyById(parsedPropertyId.data);
+
+        if (property === undefined) {
+          return reply.code(404).send({ error: 'Property not found.' });
+        }
+
+        const signals = await dependencies.rentalDataRepository.listMarketSignals(parsedPropertyId.data);
+        const ruleBasedPricing = dependencies.calculateRuleBasedPricing(property, signals);
+        const aiRecommendation = await dependencies.aiPricingProvider.getRecommendation(ruleBasedPricing);
+
+        return aiPricingPreviewResponseSchema.parse({
+          rule_based_pricing: ruleBasedPricing,
+          ai_recommendation: aiRecommendation,
+        });
+      } catch (error) {
+        const code = getErrorCode(error);
+        app.log.error(
+          { aiPricingError: { name: getErrorName(error), ...(code ? { code } : {}) } },
+          'AI pricing preview failed',
         );
         return reply.code(503).send({ error: 'Service unavailable.' });
       }

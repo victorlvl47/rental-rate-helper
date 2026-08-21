@@ -213,10 +213,20 @@ curl -i 'http://localhost:8080/properties?city=Guatemala%20City'
 curl -i 'http://localhost:8080/properties?city=Toronto'
 curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/market-signals
 curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-preview
+curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/ai-pricing-preview
 ```
 
 `10000000-0000-4000-8000-000000000001` is the fixed ID for the seeded Sample
 Harbor Studio property. Its market signals are returned in ascending date order.
+
+### AI pricing preview smoke path
+
+After starting infrastructure, applying migrations, and seeding with the commands
+above, run the final curl command in the read-only API examples. It returns the
+authoritative deterministic `rule_based_pricing` result alongside an
+`ai_recommendation`. `AI_PROVIDER=stub` is the local default, so this smoke path
+requires no OpenAI API key and makes no network call. The endpoint is read-only:
+it does not save a recommendation.
 
 | Scenario | Expected response |
 | --- | --- |
