@@ -89,4 +89,39 @@ describe('AI provider configuration', () => {
 
     expect(provider).toBeInstanceOf(OpenAiPricingProvider);
   });
+
+  it('passes OPENAI_MODEL through the factory to the OpenAI request body', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        status: 'completed',
+        output: [
+          {
+            type: 'message',
+            content: [
+              {
+                type: 'output_text',
+                text: JSON.stringify({
+                  recommended_price: ruleBasedPricing.recommended_price,
+                  explanation: 'The deterministic result is authoritative.',
+                  confidence_score: 0.8,
+                  risk_level: 'low',
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const provider = createAiPricingProvider(
+      { AI_PROVIDER: 'openai', OPENAI_API_KEY: 'test-key', OPENAI_MODEL: 'gpt-test' },
+      { fetch },
+    );
+
+    await provider.getRecommendation(ruleBasedPricing);
+
+    const request = fetch.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(request.body as string)).toMatchObject({ model: 'gpt-test' });
+  });
 });
