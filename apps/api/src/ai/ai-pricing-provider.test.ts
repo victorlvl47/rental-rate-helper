@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { aiPricingRecommendationSchema, type RuleBasedPricingResult } from 'shared';
 
 import { createAiPricingProvider, parseAiProviderConfig } from './config.js';
+import { OpenAiPricingProvider } from './openai-ai-pricing-provider.js';
 import { stubAiPricingProvider } from './stub-ai-pricing-provider.js';
 
 const ruleBasedPricing: RuleBasedPricingResult = {
@@ -63,15 +64,9 @@ describe('AI provider configuration', () => {
     expect(() => parseAiProviderConfig({ AI_PROVIDER: 'openai', OPENAI_API_KEY: '   ' })).toThrow('OPENAI_API_KEY');
 
     const testSecret = 'test-secret-that-must-not-appear';
-    expect(() => createAiPricingProvider({ AI_PROVIDER: 'openai', OPENAI_API_KEY: testSecret })).toThrow(
-      'not available yet',
+    expect(createAiPricingProvider({ AI_PROVIDER: 'openai', OPENAI_API_KEY: testSecret })).toBeInstanceOf(
+      OpenAiPricingProvider,
     );
-    try {
-      createAiPricingProvider({ AI_PROVIDER: 'openai', OPENAI_API_KEY: testSecret });
-    } catch (error) {
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).not.toContain(testSecret);
-    }
   });
 
   it('accepts reserved OpenAI configuration without mutating process.env', () => {
@@ -83,5 +78,15 @@ describe('AI provider configuration', () => {
       }),
     ).toEqual({ provider: 'openai', openaiApiKey: 'test-key', openaiModel: 'gpt-test' });
     expect(() => parseAiProviderConfig({ AI_PROVIDER: 'unsupported' })).toThrow('AI_PROVIDER');
+  });
+
+  it('constructs the OpenAI provider through the factory with injected transport', () => {
+    const fetch = vi.fn();
+    const provider = createAiPricingProvider(
+      { AI_PROVIDER: 'openai', OPENAI_API_KEY: 'test-key', OPENAI_MODEL: 'gpt-test' },
+      { fetch },
+    );
+
+    expect(provider).toBeInstanceOf(OpenAiPricingProvider);
   });
 });

@@ -1,4 +1,5 @@
 import type { AiPricingProvider } from './ai-pricing-provider.js';
+import { createOpenAiPricingProvider, type FetchLike } from './openai-ai-pricing-provider.js';
 import { stubAiPricingProvider } from './stub-ai-pricing-provider.js';
 
 export type AiProviderEnvironment = Readonly<Record<string, string | undefined>>;
@@ -6,6 +7,10 @@ export type AiProviderEnvironment = Readonly<Record<string, string | undefined>>
 export type AiProviderConfig =
   | { provider: 'stub' }
   | { provider: 'openai'; openaiApiKey: string; openaiModel?: string };
+
+export interface AiPricingProviderDependencies {
+  fetch?: FetchLike;
+}
 
 export function parseAiProviderConfig(environment: AiProviderEnvironment = process.env): AiProviderConfig {
   const provider = environment.AI_PROVIDER;
@@ -33,16 +38,19 @@ export function parseAiProviderConfig(environment: AiProviderEnvironment = proce
   };
 }
 
-/**
- * Selects the local stub today. The OpenAI branch is intentionally reserved
- * for the real provider that will be introduced in Issue 18.
- */
-export function createAiPricingProvider(environment: AiProviderEnvironment = process.env): AiPricingProvider {
+export function createAiPricingProvider(
+  environment: AiProviderEnvironment = process.env,
+  dependencies: AiPricingProviderDependencies = {},
+): AiPricingProvider {
   const config = parseAiProviderConfig(environment);
 
   if (config.provider === 'stub') {
     return stubAiPricingProvider;
   }
 
-  throw new Error('The OpenAI pricing provider is not available yet.');
+  return createOpenAiPricingProvider({
+    apiKey: config.openaiApiKey,
+    model: config.openaiModel,
+    fetch: dependencies.fetch,
+  });
 }
