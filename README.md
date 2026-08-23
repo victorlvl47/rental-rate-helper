@@ -1,10 +1,11 @@
 # RentalRateHelper
 
-RentalRateHelper is a foundation for a web application that will analyze rental
-market data and recommend competitive rental rates by city. Epic 1 supplies the
-local development platform only; it does not include rental-pricing features.
+RentalRateHelper is a local web application for exploring deterministic rental
+market data and pricing previews by city. It includes a read-only AI pricing
+preview that adds structured explanation, confidence, and risk metadata without
+changing the authoritative deterministic price or range.
 
-## Epic 1 architecture
+## Architecture
 
 ```text
 Next.js dashboard → Fastify API → Drizzle → PostgreSQL
@@ -45,7 +46,19 @@ API_PORT=8080
 NEXT_PUBLIC_API_URL=http://localhost:8080
 TEMPORAL_ADDRESS=localhost:7233
 TEMPORAL_TASK_QUEUE=rental-rate-helper
+# The local deterministic AI-pricing stub is the default and needs no key.
+AI_PROVIDER=stub
+# Required only when AI_PROVIDER=openai. Never commit a real key.
+OPENAI_API_KEY=
+# Optional; defaults to gpt-5.6.
+OPENAI_MODEL=
 ```
+
+The API imports the database package, which loads the repository-root `.env`.
+`pnpm --filter api dev` therefore uses that file; `apps/api/.env` is not loaded
+by the API startup command. The committed example keeps the stub enabled. To
+run a smoke test independently of any local OpenAI setting, set
+`AI_PROVIDER=stub` on the API command below.
 
 Start the infrastructure without removing persistent data:
 
@@ -174,7 +187,7 @@ From the repository root, run the commands in this order:
 pnpm infra:up
 pnpm --filter database db:migrate
 pnpm --filter database db:seed
-pnpm --filter api dev
+AI_PROVIDER=stub pnpm --filter api dev
 ```
 
 `pnpm infra:up` starts the local Docker services, including PostgreSQL. Run
@@ -184,8 +197,9 @@ It is safe to rerun `pnpm --filter database db:seed`; known fixed records are
 updated rather than duplicated.
 
 The API listens at `http://localhost:8080` by default (the `API_PORT` value in
-`.env`). Start it in a separate terminal with `pnpm --filter api dev` after the
-database has been migrated and seeded.
+the repository-root `.env`). Start it in a separate terminal after the database
+has been migrated and seeded. The command above explicitly selects the
+credential-free stub, even if `.env` has an OpenAI configuration.
 
 ### Data rules
 
@@ -212,10 +226,73 @@ curl -i 'http://localhost:8080/properties?city=Las%20Vegas'
 curl -i 'http://localhost:8080/properties?city=Guatemala%20City'
 curl -i 'http://localhost:8080/properties?city=Toronto'
 curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/market-signals
+curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-preview
+curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/ai-pricing-preview
 ```
 
 `10000000-0000-4000-8000-000000000001` is the fixed ID for the seeded Sample
 Harbor Studio property. Its market signals are returned in ascending date order.
+
+### Epic 4 AI pricing verification
+
+Use this reproducible local smoke path. It requires no OpenAI key and makes no
+network request: the explicit `AI_PROVIDER=stub` process returns deterministic
+structured metadata.
+
+```bash
+pnpm infra:up
+pnpm --filter database db:migrate
+pnpm --filter database db:seed
+AI_PROVIDER=stub pnpm --filter api dev
+```
+
+Leave the API running in that terminal. In another terminal, call the seeded
+property twice and compare the complete JSON responses:
+
+```bash
+curl --fail --silent --show-error \
+  http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/ai-pricing-preview \
+  -o /tmp/rental-rate-helper-ai-preview-1.json
+curl --fail --silent --show-error \
+  http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/ai-pricing-preview \
+  -o /tmp/rental-rate-helper-ai-preview-2.json
+cmp /tmp/rental-rate-helper-ai-preview-1.json /tmp/rental-rate-helper-ai-preview-2.json
+```
+
+`cmp` exits successfully when the responses are identical. The JSON contains
+`rule_based_pricing` (including numeric USD prices, safe range, adjustment
+breakdown, signal count, and whether signals were used) and
+`ai_recommendation` (the same recommended price plus a non-empty explanation,
+confidence from 0 to 1, and an allowed risk level). For the seeded property,
+expect price `216.55`, range `205.72`–`227.38`, confidence `0.8`, and risk
+`low`. The deterministic result is authoritative: the AI provider cannot alter
+its recommended price or range. The endpoint is read-only and does not save
+recommendations.
+
+Check the validation cases as well:
+
+```bash
+curl -i http://localhost:8080/properties/not-a-uuid/ai-pricing-preview
+curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000099/ai-pricing-preview
+```
+
+The first returns `400` with `{"error":"Invalid property ID."}`; the second
+returns `404` with `{"error":"Property not found."}`.
+
+Run the automated verification suite from the repository root:
+
+```bash
+pnpm --filter shared test
+pnpm --filter api test
+pnpm build
+pnpm typecheck
+git diff --check
+```
+
+OpenAI is optional and intentionally manual. To use it, set
+`AI_PROVIDER=openai` and a real `OPENAI_API_KEY` only in the ignored
+repository-root `.env`; `OPENAI_MODEL` is optional. Do not add a key to a
+tracked file. This is not required for the stub smoke path or automated tests.
 
 | Scenario | Expected response |
 | --- | --- |
