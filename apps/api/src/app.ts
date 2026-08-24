@@ -1,9 +1,16 @@
 import cors from '@fastify/cors';
 import { checkDatabaseConnection, closeDatabase } from 'database';
 import Fastify from 'fastify';
-import { aiPricingPreviewResponseSchema, propertySchema, RENTAL_MARKETS, rentalMarketSchema } from 'shared';
+import {
+  aiPricingPreviewResponseSchema,
+  aiPricingValidationRejectionResponseSchema,
+  propertySchema,
+  RENTAL_MARKETS,
+  rentalMarketSchema,
+} from 'shared';
 import type { AiPricingProvider } from './ai/ai-pricing-provider.js';
 import { createAiPricingProvider } from './ai/config.js';
+import { validateAiPricingRecommendation } from './ai/validate-ai-pricing-recommendation.js';
 import { calculateRuleBasedPricing } from './pricing/rule-based-pricing.js';
 import { createRentalDataRepository, type RentalDataRepository } from './rental-data-repository.js';
 
@@ -164,10 +171,20 @@ export function createApp(options: CreateAppOptions = {}) {
         const signals = await dependencies.rentalDataRepository.listMarketSignals(parsedPropertyId.data);
         const ruleBasedPricing = dependencies.calculateRuleBasedPricing(property, signals);
         const aiRecommendation = await dependencies.aiPricingProvider.getRecommendation(ruleBasedPricing);
+        const validation = validateAiPricingRecommendation(property, ruleBasedPricing, aiRecommendation);
+
+        if (!validation.valid) {
+          return reply.code(422).send(
+            aiPricingValidationRejectionResponseSchema.parse({
+              error: 'Recommendation rejected.',
+              issue_codes: validation.issue_codes,
+            }),
+          );
+        }
 
         return aiPricingPreviewResponseSchema.parse({
           rule_based_pricing: ruleBasedPricing,
-          ai_recommendation: aiRecommendation,
+          ai_recommendation: validation.recommendation,
         });
       } catch (error) {
         const code = getErrorCode(error);

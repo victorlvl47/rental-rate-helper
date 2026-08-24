@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   aiPricingPreviewResponseSchema,
+  aiPricingValidationRejectionResponseSchema,
   marketSignalSchema,
   propertySchema,
   RENTAL_MARKETS,
@@ -294,7 +295,7 @@ describe('pricing preview route', () => {
 });
 
 describe('AI pricing preview route', () => {
-  it('returns the complete schema-valid deterministic result and AI metadata for a known property', async () => {
+  it('calculates deterministic pricing once and returns the complete schema-valid preview for a valid recommendation', async () => {
     const pricingCalculator = vi.fn(calculateRuleBasedPricing);
     const aiPricingProvider: AiPricingProvider = {
       getRecommendation: async (ruleBasedPricing) => ({
@@ -350,6 +351,104 @@ describe('AI pricing preview route', () => {
     ).toBe(404);
   });
 
+  it('safely rejects runtime-invalid injected provider output with validation issue codes', async () => {
+    const app = createTestApp(
+      {},
+      {
+        aiPricingProvider: {
+          getRecommendation: async () => ({
+            recommended_price: '104.34',
+            explanation: 'provider payload secret',
+            confidence_score: 0.8,
+            risk_level: 'low',
+          }),
+        } as unknown as AiPricingProvider,
+      },
+    );
+    const response = await app.inject({
+      method: 'GET',
+      url: `/properties/${property.id}/ai-pricing-preview`,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(aiPricingValidationRejectionResponseSchema.parse(response.json())).toEqual({
+      error: 'Recommendation rejected.',
+      issue_codes: ['malformed_recommendation'],
+    });
+    expect(response.body).not.toContain('provider payload secret');
+  });
+
+  it('safely rejects a schema-valid provider price that differs from the authoritative result', async () => {
+    const app = createTestApp(
+      {},
+      {
+        aiPricingProvider: {
+          getRecommendation: async (ruleBasedPricing) => ({
+            recommended_price: ruleBasedPricing.recommended_price + 0.01,
+            explanation: 'A schema-valid but non-authoritative price.',
+            confidence_score: 0.8,
+            risk_level: 'low',
+          }),
+        },
+      },
+    );
+    const response = await app.inject({
+      method: 'GET',
+      url: `/properties/${property.id}/ai-pricing-preview`,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(aiPricingValidationRejectionResponseSchema.parse(response.json())).toEqual({
+      error: 'Recommendation rejected.',
+      issue_codes: ['price_mismatch_authoritative_result'],
+    });
+  });
+
+  it('safely rejects an authoritative deterministic result above the 30% policy limit', async () => {
+    const policyConflictPricing = ruleBasedPricingResultSchema.parse({
+      ...calculateRuleBasedPricing(property, signals),
+      minimum_recommended_price: 237.5,
+      recommended_price: 240.51,
+      maximum_recommended_price: 243.5,
+      adjustments: {
+        occupancy: 0.2,
+        demand: 0.1,
+        competitor: 0.1,
+        seasonality: 0.05,
+        local_event: 0.05,
+        total: 0.35,
+      },
+    });
+    const pricingCalculator = vi.fn(() => policyConflictPricing);
+    const app = createTestApp(
+      {},
+      {
+        calculateRuleBasedPricing: pricingCalculator,
+        aiPricingProvider: {
+          getRecommendation: async (ruleBasedPricing) => ({
+            recommended_price: ruleBasedPricing.recommended_price,
+            explanation: 'The deterministic result is authoritative.',
+            confidence_score: 0.8,
+            risk_level: 'low',
+          }),
+        },
+      },
+    );
+    const response = await app.inject({
+      method: 'GET',
+      url: `/properties/${property.id}/ai-pricing-preview`,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(aiPricingValidationRejectionResponseSchema.parse(response.json())).toEqual({
+      error: 'Recommendation rejected.',
+      issue_codes: ['authoritative_result_exceeds_30_percent'],
+    });
+    expect(pricingCalculator).toHaveBeenCalledTimes(1);
+    expect(pricingCalculator).toHaveBeenCalledWith(property, signals);
+    expect(policyConflictPricing.recommended_price).toBe(240.51);
+  });
+
   it.each([
     [
       'property repository failure',
@@ -370,20 +469,6 @@ describe('AI pricing preview route', () => {
       'provider call failure',
       {},
       { aiPricingProvider: { getRecommendation: async () => Promise.reject(new Error('provider payload secret')) } },
-    ],
-    [
-      'invalid runtime provider result',
-      {},
-      {
-        aiPricingProvider: {
-          getRecommendation: async () => ({
-            recommended_price: '104.34',
-            explanation: 'invalid runtime result',
-            confidence_score: 0.8,
-            risk_level: 'low',
-          }),
-        } as unknown as AiPricingProvider,
-      },
     ],
   ])('returns a safe 503 for %s', async (_failure, repositoryOverrides, dependencyOverrides) => {
     const response = await createTestApp(repositoryOverrides, dependencyOverrides).inject({
