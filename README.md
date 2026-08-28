@@ -279,11 +279,37 @@ curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000099/ai
 The first returns `400` with `{"error":"Invalid property ID."}`; the second
 returns `404` with `{"error":"Property not found."}`.
 
+### Offline pricing validation eval
+
+Run the checked-in pricing validation/eval suite from the repository root:
+
+```bash
+pnpm --filter api eval:pricing
+```
+
+This no-credential command uses static in-memory fixtures only. It requires no
+API key, OpenAI request, network access, database, Temporal worker, or other
+infrastructure service. It prints one deterministic `PASS` or `FAIL` line per
+case with the expected and actual classification, followed by a final summary.
+
+The deterministic rule-based result is the authoritative source of the price
+and safe range. An AI preview returns AI metadata only when it passes
+validation; invalid metadata is safely rejected with a `422` response and its
+safe issue codes. The preview is read-only, so a rejected response does not
+save a recommendation.
+
+The current pricing policies intentionally expose an unresolved conflict: the
+deterministic engine permits a total adjustment up to ±35%, while validation
+rejects a single price increase above 30%. An authoritative result above 30%
+is therefore rejected rather than silently clamped or mutated. Reconciling
+these limits requires a future pricing-policy decision.
+
 Run the automated verification suite from the repository root:
 
 ```bash
 pnpm --filter shared test
 pnpm --filter api test
+pnpm --filter api eval:pricing
 pnpm build
 pnpm typecheck
 git diff --check

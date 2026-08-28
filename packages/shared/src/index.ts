@@ -17,3 +17,14 @@ export type { RuleBasedPricingResult } from './rule-based-pricing.js';
 
 export { aiPricingPreviewResponseSchema, aiPricingRecommendationSchema } from './ai-pricing-recommendation.js';
 export type { AiPricingPreviewResponse, AiPricingRecommendation } from './ai-pricing-recommendation.js';
+
+export {
+  aiPricingValidationRejectionResponseSchema,
+  recommendationValidationIssueCodeSchema,
+  recommendationValidationResultSchema,
+} from './recommendation-validation.js';
+export type {
+  AiPricingValidationRejectionResponse,
+  RecommendationValidationIssueCode,
+  RecommendationValidationResult,
+} from './recommendation-validation.js';
