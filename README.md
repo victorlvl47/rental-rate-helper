@@ -298,6 +298,46 @@ validation; invalid metadata is safely rejected with a `422` response and its
 safe issue codes. The preview is read-only, so a rejected response does not
 save a recommendation.
 
+## Temporal pricing workflow
+
+The durable recommendation path is separate from both preview endpoints. A
+request is idempotent by `property_id + pricing_date`; the API and worker use
+the same deterministic workflow ID (`pricing-<property-id>-<YYYY-MM-DD>`).
+The deterministic engine owns the price and range. AI supplies only validated
+explanation, confidence, and risk metadata.
+
+Run the local stub path in this order:
+
+```bash
+pnpm infra:up
+pnpm --filter database db:migrate
+pnpm --filter database db:seed
+AI_PROVIDER=stub pnpm --filter api dev
+pnpm --filter worker dev
+```
+
+Start a request (the response is immediate; it does not wait for AI):
+
+```bash
+curl -i -X POST http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-recommendations \
+  -H 'content-type: application/json' \
+  -d '{"pricing_date":"2026-09-14"}'
+curl -i 'http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-recommendations/status?pricing_date=2026-09-14'
+```
+
+Repeat the POST with the same date to resolve the same logical workflow and
+durable request. Status responses expose only lifecycle state, safe validation
+issue codes, accepted metadata, and known metrics; raw prompts/provider bodies
+and credentials are never stored or returned. The stub has no token or cost
+usage, so those fields remain `null` rather than being invented.
+
+`pnpm --filter api eval:pricing` remains the credential-free, deterministic
+offline validation suite. It does not need PostgreSQL, Temporal, or OpenAI.
+The workflow path above is local/manual verification with the stub provider.
+An OpenAI smoke check is optional and manual: configure `AI_PROVIDER=openai`
+and `OPENAI_API_KEY` locally, then run the same start/status sequence; never
+use it as automated coverage.
+
 The current pricing policies intentionally expose an unresolved conflict: the
 deterministic engine permits a total adjustment up to ±35%, while validation
 rejects a single price increase above 30%. An authoritative result above 30%

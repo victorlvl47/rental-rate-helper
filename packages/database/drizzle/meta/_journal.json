@@ -8,6 +8,7 @@
       "when": 1786682252779,
       "tag": "0000_busy_diamondback",
       "breakpoints": true
-    }
+    },
+    { "idx": 1, "version": "7", "when": 1786682252780, "tag": "0001_temporal_pricing_workflow", "breakpoints": true }
   ]
 }

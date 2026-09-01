@@ -1,5 +1,5 @@
 import cors from '@fastify/cors';
-import { checkDatabaseConnection, closeDatabase } from 'database';
+import { checkDatabaseConnection, closeDatabase, createRecommendationWorkflowRepository, type RecommendationWorkflowRepository } from 'database';
 import Fastify from 'fastify';
 import {
   aiPricingPreviewResponseSchema,
@@ -7,12 +7,16 @@ import {
   propertySchema,
   RENTAL_MARKETS,
   rentalMarketSchema,
+  calendarDateSchema,
+  pricingWorkflowId,
+  pricingWorkflowRequestSchema,
 } from 'shared';
 import type { AiPricingProvider } from './ai/ai-pricing-provider.js';
 import { createAiPricingProvider } from './ai/config.js';
 import { validateAiPricingRecommendation } from './ai/validate-ai-pricing-recommendation.js';
 import { calculateRuleBasedPricing } from './pricing/rule-based-pricing.js';
 import { createRentalDataRepository, type RentalDataRepository } from './rental-data-repository.js';
+import { createPricingWorkflowClient, type PricingWorkflowClient } from './temporal/pricing-workflow-client.js';
 
 export interface ApiDependencies {
   checkDatabaseConnection: () => Promise<void>;
@@ -20,6 +24,8 @@ export interface ApiDependencies {
   rentalDataRepository: RentalDataRepository;
   aiPricingProvider: AiPricingProvider;
   calculateRuleBasedPricing: typeof calculateRuleBasedPricing;
+  pricingWorkflowClient: PricingWorkflowClient;
+  recommendationWorkflowRepository: RecommendationWorkflowRepository;
 }
 
 interface CreateAppOptions extends Partial<ApiDependencies> {
@@ -38,6 +44,8 @@ const defaultDependencies: ApiDependencies = {
     },
   },
   calculateRuleBasedPricing,
+  pricingWorkflowClient: createPricingWorkflowClient(),
+  recommendationWorkflowRepository: createRecommendationWorkflowRepository(),
 };
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -121,6 +129,18 @@ export function createApp(options: CreateAppOptions = {}) {
       }
     },
   );
+
+  app.post<{ Params: { propertyId: string }; Body: { pricing_date?: unknown } }>('/properties/:propertyId/pricing-recommendations', async (request, reply) => {
+    const parsed = pricingWorkflowRequestSchema.safeParse({ property_id: request.params.propertyId, pricing_date: request.body?.pricing_date });
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid property ID or pricing date.' });
+    try { const started = await dependencies.pricingWorkflowClient.startOrResolve(parsed.data); return reply.code(started.started ? 202 : 200).send({ workflow_id: started.workflow_id, status: 'pending', already_started: !started.started }); } catch { return reply.code(503).send({ error: 'Service unavailable.' }); }
+  });
+
+  app.get<{ Params: { propertyId: string }; Querystring: { pricing_date?: unknown } }>('/properties/:propertyId/pricing-recommendations/status', async (request, reply) => {
+    const parsed = pricingWorkflowRequestSchema.safeParse({ property_id: request.params.propertyId, pricing_date: request.query.pricing_date });
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid property ID or pricing date.' });
+    try { const status = await dependencies.recommendationWorkflowRepository.getStatus(parsed.data); return status ? status : reply.code(404).send({ error: 'Pricing request not found.' }); } catch { return reply.code(503).send({ error: 'Service unavailable.' }); }
+  });
 
   app.get<{ Params: { propertyId: string } }>(
     '/properties/:propertyId/pricing-preview',

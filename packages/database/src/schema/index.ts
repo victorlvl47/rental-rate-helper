@@ -8,6 +8,7 @@ import {
   pgEnum,
   pgTable,
   text,
+  timestamp,
   unique,
   uuid,
 } from 'drizzle-orm/pg-core';
@@ -69,3 +70,14 @@ export const marketSignals = pgTable(
     check('market_signals_demand_score_range', sql`${table.demand_score} BETWEEN 0 AND 1`),
   ],
 );
+
+export const pricingWorkflowStatusEnum = pgEnum('pricing_workflow_status', ['pending', 'running', 'accepted', 'rejected', 'failed']);
+export const pricingWorkflowRequests = pgTable('pricing_workflow_requests', {
+  id: uuid('id').defaultRandom().primaryKey(), property_id: uuid('property_id').notNull().references(() => properties.id), pricing_date: date('pricing_date', { mode: 'string' }).notNull(), temporal_workflow_id: text('temporal_workflow_id').notNull(), status: pricingWorkflowStatusEnum('status').notNull().default('pending'), issue_codes: text('issue_codes').array().notNull().default(sql`ARRAY[]::text[]`), created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => [unique('pricing_workflow_requests_property_date_unique').on(table.property_id, table.pricing_date), unique('pricing_workflow_requests_temporal_id_unique').on(table.temporal_workflow_id)]);
+export const pricingRecommendations = pgTable('pricing_recommendations', {
+  id: uuid('id').defaultRandom().primaryKey(), request_id: uuid('request_id').notNull().references(() => pricingWorkflowRequests.id), property_id: uuid('property_id').notNull().references(() => properties.id), pricing_date: date('pricing_date', { mode: 'string' }).notNull(), deterministic_price: numeric('deterministic_price', { precision: 10, scale: 2 }).notNull(), minimum_price: numeric('minimum_price', { precision: 10, scale: 2 }).notNull(), maximum_price: numeric('maximum_price', { precision: 10, scale: 2 }).notNull(), explanation: text('explanation').notNull(), confidence_score: numeric('confidence_score').notNull(), risk_level: text('risk_level').notNull(), validation_status: text('validation_status').notNull().default('accepted'), created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => [unique('pricing_recommendations_request_unique').on(table.request_id)]);
+export const aiCallMetrics = pgTable('ai_call_metrics', {
+  id: uuid('id').defaultRandom().primaryKey(), request_id: uuid('request_id').notNull().references(() => pricingWorkflowRequests.id), recommendation_id: uuid('recommendation_id').references(() => pricingRecommendations.id), model: text('model').notNull(), prompt_version: text('prompt_version').notNull(), input_tokens: integer('input_tokens'), output_tokens: integer('output_tokens'), estimated_cost_usd: numeric('estimated_cost_usd', { precision: 10, scale: 6 }), latency_ms: integer('latency_ms').notNull(), success: integer('success').notNull(), created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

@@ -1,13 +1,14 @@
 import { NativeConnection, Worker } from '@temporalio/worker';
 import { fileURLToPath } from 'node:url';
-import * as activities from './activities/smoke-activity.js';
+import * as smokeActivities from './activities/smoke-activity.js';
+import * as pricingActivities from './activities/pricing-recommendation-activity.js';
 import { temporalAddress, temporalTaskQueue } from './config.js';
 
 const workflowPath = fileURLToPath(
   new URL(
     import.meta.url.endsWith('.ts')
-      ? './workflows/smoke-workflow.ts'
-      : './workflows/smoke-workflow.js',
+      ? './workflows/index.ts'
+      : './workflows/index.js',
     import.meta.url,
   ),
 );
@@ -29,7 +30,7 @@ async function run(): Promise<void> {
     connection = await NativeConnection.connect({ address: temporalAddress });
 
     worker = await Worker.create({
-      activities,
+      activities: { ...smokeActivities, ...pricingActivities },
       connection,
       taskQueue: temporalTaskQueue,
       workflowsPath: workflowPath,
