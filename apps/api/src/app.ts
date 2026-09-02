@@ -17,6 +17,7 @@ import { validateAiPricingRecommendation } from './ai/validate-ai-pricing-recomm
 import { calculateRuleBasedPricing } from './pricing/rule-based-pricing.js';
 import { createRentalDataRepository, type RentalDataRepository } from './rental-data-repository.js';
 import { createPricingWorkflowClient, type PricingWorkflowClient } from './temporal/pricing-workflow-client.js';
+import { temporalAddress } from './temporal/runtime-config.js';
 
 export interface ApiDependencies {
   checkDatabaseConnection: () => Promise<void>;
@@ -133,7 +134,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.post<{ Params: { propertyId: string }; Body: { pricing_date?: unknown } }>('/properties/:propertyId/pricing-recommendations', async (request, reply) => {
     const parsed = pricingWorkflowRequestSchema.safeParse({ property_id: request.params.propertyId, pricing_date: request.body?.pricing_date });
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid property ID or pricing date.' });
-    try { const started = await dependencies.pricingWorkflowClient.startOrResolve(parsed.data); return reply.code(started.started ? 202 : 200).send({ workflow_id: started.workflow_id, status: 'pending', already_started: !started.started }); } catch { return reply.code(503).send({ error: 'Service unavailable.' }); }
+    try { const started = await dependencies.pricingWorkflowClient.startOrResolve(parsed.data); return reply.code(started.started ? 202 : 200).send({ workflow_id: started.workflow_id, status: 'pending', already_started: !started.started }); } catch (error) { const code = getErrorCode(error); app.log.error({ temporalStartError: { name: getErrorName(error), ...(code ? { code } : {}), address: temporalAddress, workflow_id: pricingWorkflowId(parsed.data) } }, 'Pricing workflow start failed'); return reply.code(503).send({ error: 'Service unavailable.' }); }
   });
 
   app.get<{ Params: { propertyId: string }; Querystring: { pricing_date?: unknown } }>('/properties/:propertyId/pricing-recommendations/status', async (request, reply) => {

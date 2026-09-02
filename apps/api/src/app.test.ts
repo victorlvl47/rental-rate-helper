@@ -14,6 +14,8 @@ import { stubAiPricingProvider } from './ai/stub-ai-pricing-provider.js';
 import { createApp, type ApiDependencies } from './app.js';
 import { calculateRuleBasedPricing } from './pricing/rule-based-pricing.js';
 import type { RentalDataRepository } from './rental-data-repository.js';
+import type { RecommendationWorkflowRepository } from 'database';
+import type { PricingWorkflowClient } from './temporal/pricing-workflow-client.js';
 
 const property: Property = {
   id: '10000000-0000-4000-8000-000000000001',
@@ -78,6 +80,41 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+describe('pricing workflow routes', () => {
+  const workflowClient: PricingWorkflowClient = { startOrResolve: vi.fn(async (request) => ({ workflow_id: `pricing-${request.property_id}-${request.pricing_date}`, started: true })) };
+  const workflowRepository: RecommendationWorkflowRepository = {
+    createOrResolve: async () => { throw new Error('not used by API'); }, updateStatus: async () => undefined, saveAccepted: async () => 'recommendation-id', saveMetrics: async () => undefined,
+    getStatus: async (request) => ({ property_id: request.property_id, pricing_date: request.pricing_date, workflow_id: `pricing-${request.property_id}-${request.pricing_date}`, status: 'accepted', issue_codes: [], recommendation: { deterministic: calculateRuleBasedPricing(property, signals), ai_metadata: { recommended_price: calculateRuleBasedPricing(property, signals).recommended_price, explanation: 'Stored metadata.', confidence_score: 0.8, risk_level: 'low' } }, metrics: { model: 'stub', prompt_version: 'v1', input_tokens: null, output_tokens: null, estimated_cost_usd: null, latency_ms: 0, success: true } }),
+  };
+  function appWithWorkflow(overrides: Partial<ApiDependencies> = {}) {
+    const app = createApp({ logger: false, checkDatabaseConnection: async () => undefined, closeDatabase: async () => undefined, rentalDataRepository: repository, aiPricingProvider: stubAiPricingProvider, calculateRuleBasedPricing, pricingWorkflowClient: workflowClient, recommendationWorkflowRepository: workflowRepository, ...overrides }); apps.push(app); return app;
+  }
+  it('starts a valid request and reports an existing workflow truthfully', async () => {
+    const first = await appWithWorkflow().inject({ method: 'POST', url: `/properties/${property.id}/pricing-recommendations`, payload: { pricing_date: '2026-09-14' } });
+    expect(first.statusCode).toBe(202); expect(first.json()).toMatchObject({ already_started: false });
+    const duplicateClient: PricingWorkflowClient = { startOrResolve: async (request) => ({ workflow_id: `pricing-${request.property_id}-${request.pricing_date}`, started: false }) };
+    const duplicate = await appWithWorkflow({ pricingWorkflowClient: duplicateClient }).inject({ method: 'POST', url: `/properties/${property.id}/pricing-recommendations`, payload: { pricing_date: '2026-09-14' } });
+    expect(duplicate.statusCode).toBe(200); expect(duplicate.json()).toMatchObject({ already_started: true });
+  });
+  it('rejects invalid start input and safely contains Temporal failures', async () => {
+    expect((await appWithWorkflow().inject({ method: 'POST', url: '/properties/not-a-uuid/pricing-recommendations', payload: { pricing_date: 'bad' } })).statusCode).toBe(400);
+    const app = appWithWorkflow({ pricingWorkflowClient: { startOrResolve: async () => { throw Object.assign(new Error('secret provider payload'), { code: 'UNAVAILABLE' }); } } });
+    const logError = vi.spyOn(app.log, 'error');
+    const response = await app.inject({ method: 'POST', url: `/properties/${property.id}/pricing-recommendations`, payload: { pricing_date: '2026-09-14' } });
+    expect(response.statusCode).toBe(503); expect(response.body).not.toContain('secret');
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({ temporalStartError: expect.objectContaining({ name: 'Error', code: 'UNAVAILABLE', address: 'localhost:7233', workflow_id: `pricing-${property.id}-2026-09-14` }) }), 'Pricing workflow start failed');
+    expect(JSON.stringify(logError.mock.calls)).not.toContain('secret');
+  });
+  it('returns truthful accepted status, safe rejection, not found, and repository failures', async () => {
+    const accepted = await appWithWorkflow().inject({ method: 'GET', url: `/properties/${property.id}/pricing-recommendations/status?pricing_date=2026-09-14` });
+    expect(accepted.statusCode).toBe(200); expect(accepted.json().recommendation.deterministic).toEqual(calculateRuleBasedPricing(property, signals));
+    const rejected = await appWithWorkflow({ recommendationWorkflowRepository: { ...workflowRepository, getStatus: async (request) => ({ property_id: request.property_id, pricing_date: request.pricing_date, workflow_id: 'pricing-id', status: 'rejected', issue_codes: ['malformed_recommendation'], recommendation: null, metrics: { model: 'stub', prompt_version: 'v1', input_tokens: null, output_tokens: null, estimated_cost_usd: null, latency_ms: 1, success: true } }) } }).inject({ method: 'GET', url: `/properties/${property.id}/pricing-recommendations/status?pricing_date=2026-09-14` });
+    expect(rejected.json()).toMatchObject({ status: 'rejected', recommendation: null, issue_codes: ['malformed_recommendation'] });
+    expect((await appWithWorkflow({ recommendationWorkflowRepository: { ...workflowRepository, getStatus: async () => undefined } }).inject({ method: 'GET', url: `/properties/${property.id}/pricing-recommendations/status?pricing_date=2026-09-14` })).statusCode).toBe(404);
+    expect((await appWithWorkflow({ recommendationWorkflowRepository: { ...workflowRepository, getStatus: async () => { throw new Error('postgres://secret'); } } }).inject({ method: 'GET', url: `/properties/${property.id}/pricing-recommendations/status?pricing_date=2026-09-14` })).statusCode).toBe(503);
+  });
 });
 
 describe('rental market data routes', () => {

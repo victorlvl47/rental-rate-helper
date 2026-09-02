@@ -18,6 +18,32 @@ export function calculateRuleBasedPricing(property: Property, signals: readonly 
 }
 export interface AiPricingProvider { getRecommendation(result: RuleBasedPricingResult): Promise<AiPricingRecommendation>; getRecommendationWithMetrics?(result: RuleBasedPricingResult): Promise<{ recommendation: AiPricingRecommendation; metrics: import('shared').AiCallMetrics }>; }
 export const stubAiPricingProvider: AiPricingProvider = { async getRecommendation(result) { return aiPricingRecommendationSchema.parse({ recommended_price: result.recommended_price, explanation: result.market_signals_used ? `The deterministic price uses ${result.signal_count} market signals.` : 'The deterministic price uses the occupancy-only fallback because no market signals are available.', confidence_score: result.market_signals_used ? .8 : .6, risk_level: result.market_signals_used ? 'low' : 'medium' }); }, async getRecommendationWithMetrics(result) { const recommendation = await this.getRecommendation(result); return { recommendation, metrics: { model: 'stub', prompt_version: PRICING_PROMPT_VERSION, input_tokens: null, output_tokens: null, estimated_cost_usd: null, latency_ms: 0, success: true } }; } };
+
+export type AiProviderEnvironment = Readonly<Record<string, string | undefined>>;
+export type FetchLike = (input: string, init?: unknown) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
+export interface ConfiguredAiPricingProviderOptions { environment?: AiProviderEnvironment; fetch?: FetchLike; }
+
+/** Shared provider selection for both API and worker. No provider call occurs during selection. */
+export function createConfiguredAiPricingProvider(options: ConfiguredAiPricingProviderOptions = {}): AiPricingProvider {
+  const environment = options.environment ?? (globalThis as { process?: { env: AiProviderEnvironment } }).process?.env ?? {};
+  if (environment.AI_PROVIDER === undefined || environment.AI_PROVIDER === 'stub') return stubAiPricingProvider;
+  if (environment.AI_PROVIDER !== 'openai') throw new Error('AI_PROVIDER must be either "stub" or "openai".');
+  const apiKey = environment.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new Error('OPENAI_API_KEY must be configured when AI_PROVIDER is "openai".');
+  const model = environment.OPENAI_MODEL?.trim() || 'gpt-5.6';
+  const fetch = options.fetch ?? ((globalThis as { fetch?: FetchLike }).fetch?.bind(globalThis));
+  if (!fetch) throw new Error('Fetch is unavailable for the OpenAI provider.');
+  return {
+    async getRecommendation(result) {
+      const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, store: false, input: [{ role: 'user', content: [{ type: 'input_text', text: buildPricingPrompt(result) }] }], text: { format: { type: 'json_schema', name: 'ai_pricing_recommendation', strict: true, schema: { type: 'object', additionalProperties: false, required: ['recommended_price', 'explanation', 'confidence_score', 'risk_level'], properties: { recommended_price: { type: 'number', enum: [result.recommended_price] }, explanation: { type: 'string', minLength: 1 }, confidence_score: { type: 'number', minimum: 0, maximum: 1 }, risk_level: { type: 'string', enum: ['low', 'medium', 'high'] } } } } } }) });
+      if (!response.ok) throw new Error('OpenAI pricing provider request failed.');
+      const payload = await response.json() as { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> };
+      const text = payload.output?.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).find((content) => content.type === 'output_text')?.text;
+      if (!text) throw new Error('OpenAI pricing provider returned invalid structured output.');
+      return aiPricingRecommendationSchema.parse(JSON.parse(text));
+    },
+  };
+}
 export function buildPricingPrompt(result: RuleBasedPricingResult): string { return `You provide explanation metadata for authoritative deterministic rental pricing. Return recommended_price exactly unchanged: ${result.recommended_price}. Range: ${result.minimum_recommended_price}-${result.maximum_recommended_price}.`; }
 function add(issues: RecommendationValidationIssueCode[], issue: RecommendationValidationIssueCode) { if (!issues.includes(issue)) issues.push(issue); }
 export function validateAiPricingRecommendation(property: Property, deterministic: RuleBasedPricingResult, output: unknown): RecommendationValidationResult {
