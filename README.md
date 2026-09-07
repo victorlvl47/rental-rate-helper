@@ -338,6 +338,24 @@ An OpenAI smoke check is optional and manual: configure `AI_PROVIDER=openai`
 and `OPENAI_API_KEY` locally, then run the same start/status sequence; never
 use it as automated coverage.
 
+### Local Temporal retry-recovery integration test
+
+This focused test starts a real worker on the normal pricing task queue and a
+real workflow. Its test-only provider fails twice with transient errors, then
+returns valid deterministic metadata on the third attempt. It requires the
+local Docker services and seeded data, but never uses OpenAI or network AI
+access:
+
+```bash
+pnpm infra:up
+pnpm --filter database db:migrate
+pnpm --filter database db:seed
+pnpm --filter worker test:temporal-retry
+```
+
+The test uses a unique test date and removes its scoped workflow request,
+recommendation, and metrics rows during teardown.
+
 The current pricing policies intentionally expose an unresolved conflict: the
 deterministic engine permits a total adjustment up to ±35%, while validation
 rejects a single price increase above 30%. An authoritative result above 30%
