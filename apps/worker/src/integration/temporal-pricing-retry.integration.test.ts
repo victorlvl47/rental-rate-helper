@@ -24,12 +24,19 @@ const request: PricingWorkflowRequest = {
   pricing_date: `2099-12-${String((process.pid % 28) + 1).padStart(2, '0')}`,
 };
 
+const permanentFailureRequest: PricingWorkflowRequest = {
+  property_id: '10000000-0000-4000-8000-000000000001',
+  // Keep this separate from the retry-recovery request and all fixed seed dates.
+  pricing_date: `2099-11-${String((process.pid % 28) + 1).padStart(2, '0')}`,
+};
+
 let worker: Worker | undefined;
 let workerRun: Promise<void> | undefined;
 let workerConnection: NativeConnection | undefined;
 let clientConnection: Connection | undefined;
 let client: Client | undefined;
 let providerCalls = 0;
+let permanentFailureProviderCalls = 0;
 let databaseReady = false;
 
 function prerequisiteError(service: 'PostgreSQL' | 'Temporal', cause: unknown): Error {
@@ -55,6 +62,15 @@ function flakyProvider(): AiPricingProvider {
         confidence_score: 0.8,
         risk_level: 'low',
       };
+    },
+  };
+}
+
+function permanentlyFailingProvider(): AiPricingProvider {
+  return {
+    async getRecommendation() {
+      permanentFailureProviderCalls += 1;
+      throw new Error('test-only permanent provider failure');
     },
   };
 }
@@ -91,34 +107,38 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  worker?.shutdown();
-  await workerRun?.catch(() => undefined);
-  await clientConnection?.close();
-  await workerConnection?.close();
+  try {
+    await worker?.shutdown();
+    await workerRun?.catch(() => undefined);
+    await clientConnection?.close();
+    await workerConnection?.close();
+  } finally {
+    setPricingActivityDependencies({ provider: createConfiguredAiPricingProvider() });
 
-  setPricingActivityDependencies({ provider: createConfiguredAiPricingProvider() });
+    try {
+      if (!databaseReady) return;
 
-  if (!databaseReady) {
-    await closeDatabase();
-    return;
+      for (const scopedRequest of [request, permanentFailureRequest]) {
+        const requestFilter = and(
+          eq(pricingWorkflowRequests.property_id, scopedRequest.property_id),
+          eq(pricingWorkflowRequests.pricing_date, scopedRequest.pricing_date),
+        );
+        const [workflowRequest] = await db
+          .select({ id: pricingWorkflowRequests.id })
+          .from(pricingWorkflowRequests)
+          .where(requestFilter)
+          .limit(1);
+
+        if (workflowRequest) {
+          await db.delete(aiCallMetrics).where(eq(aiCallMetrics.request_id, workflowRequest.id));
+          await db.delete(pricingRecommendations).where(eq(pricingRecommendations.request_id, workflowRequest.id));
+          await db.delete(pricingWorkflowRequests).where(requestFilter);
+        }
+      }
+    } finally {
+      await closeDatabase();
+    }
   }
-
-  const requestFilter = and(
-    eq(pricingWorkflowRequests.property_id, request.property_id),
-    eq(pricingWorkflowRequests.pricing_date, request.pricing_date),
-  );
-  const [workflowRequest] = await db
-    .select({ id: pricingWorkflowRequests.id })
-    .from(pricingWorkflowRequests)
-    .where(requestFilter)
-    .limit(1);
-
-  if (workflowRequest) {
-    await db.delete(aiCallMetrics).where(eq(aiCallMetrics.request_id, workflowRequest.id));
-    await db.delete(pricingRecommendations).where(eq(pricingRecommendations.request_id, workflowRequest.id));
-    await db.delete(pricingWorkflowRequests).where(requestFilter);
-  }
-  await closeDatabase();
 });
 
 describe.sequential('Temporal pricing retry recovery (local integration)', () => {
@@ -161,5 +181,49 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(status?.metrics).toMatchObject({ success: true });
     expect.soft(metrics.filter((metric) => metric.success === 1)).toHaveLength(1);
     expect.soft(metrics.find((metric) => metric.success === 1)?.recommendation_id).toBeTruthy();
+  });
+
+  it('stops after three transient provider failures and safely persists no recommendation', async () => {
+    permanentFailureProviderCalls = 0;
+    setPricingActivityDependencies({ provider: permanentlyFailingProvider() });
+
+    const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', {
+      taskQueue: temporalTaskQueue,
+      workflowId: pricingWorkflowId(permanentFailureRequest),
+      args: [permanentFailureRequest],
+    });
+    const workflowResult = await handle.result();
+    const requestFilter = and(
+      eq(pricingWorkflowRequests.property_id, permanentFailureRequest.property_id),
+      eq(pricingWorkflowRequests.pricing_date, permanentFailureRequest.pricing_date),
+    );
+    const status = await (await import('database')).createRecommendationWorkflowRepository().getStatus(permanentFailureRequest);
+    const [{ recommendationCount }] = await db
+      .select({ recommendationCount: count() })
+      .from(pricingRecommendations)
+      .where(and(
+        eq(pricingRecommendations.property_id, permanentFailureRequest.property_id),
+        eq(pricingRecommendations.pricing_date, permanentFailureRequest.pricing_date),
+      ));
+    const metrics = await db
+      .select({ success: aiCallMetrics.success })
+      .from(aiCallMetrics)
+      .innerJoin(pricingWorkflowRequests, eq(aiCallMetrics.request_id, pricingWorkflowRequests.id))
+      .where(requestFilter)
+      .orderBy(desc(aiCallMetrics.created_at));
+
+    expect.soft(permanentFailureProviderCalls).toBe(3);
+    expect.soft(workflowResult).toEqual({ status: 'failed', issue_codes: [] });
+    expect.soft(status).toMatchObject({
+      status: 'failed',
+      issue_codes: [],
+      recommendation: null,
+      metrics: { success: false },
+    });
+    expect.soft(recommendationCount).toBe(0);
+    expect.soft(metrics).toHaveLength(3);
+    expect.soft(metrics.every((metric) => metric.success === 0)).toBe(true);
+    expect.soft(metrics.some((metric) => metric.success === 1)).toBe(false);
+    expect.soft(JSON.stringify(status)).not.toContain('test-only permanent provider failure');
   });
 });
