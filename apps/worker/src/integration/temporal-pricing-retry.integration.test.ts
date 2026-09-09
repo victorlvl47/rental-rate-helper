@@ -1,12 +1,14 @@
 import { Client, Connection } from '@temporalio/client';
 import { NativeConnection, Worker } from '@temporalio/worker';
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   aiCallMetrics,
   checkDatabaseConnection,
   closeDatabase,
   db,
+  marketSignals,
+  properties,
   pricingRecommendations,
   pricingWorkflowRequests,
 } from 'database';
@@ -14,8 +16,19 @@ import {
   createConfiguredAiPricingProvider,
   type AiPricingProvider,
 } from 'pricing';
-import { pricingWorkflowId, type PricingWorkflowRequest, type RuleBasedPricingResult } from 'shared';
-import { setPricingActivityDependencies } from '../activities/pricing-recommendation-activity.js';
+import {
+  marketSignalSchema,
+  pricingWorkflowId,
+  propertySchema,
+  type MarketSignal,
+  type PricingWorkflowRequest,
+  type Property,
+  type RuleBasedPricingResult,
+} from 'shared';
+import {
+  setPricingActivityDependencies,
+  type RentalDataRepository,
+} from '../activities/pricing-recommendation-activity.js';
 import { temporalAddress, temporalTaskQueue } from '../config.js';
 
 const request: PricingWorkflowRequest = {
@@ -30,6 +43,13 @@ const retryableFailureRequest: PricingWorkflowRequest = {
   pricing_date: `2099-11-${String((process.pid % 28) + 1).padStart(2, '0')}`,
 };
 
+const missingPropertyRequest: PricingWorkflowRequest = {
+  // This valid UUID is deliberately absent from the local seeded database.
+  property_id: '20000000-0000-4000-8000-000000000001',
+  // Keep this separate from the existing integration and manual-test dates.
+  pricing_date: `2099-10-${String((process.pid % 28) + 1).padStart(2, '0')}`,
+};
+
 let worker: Worker | undefined;
 let workerRun: Promise<void> | undefined;
 let workerConnection: NativeConnection | undefined;
@@ -37,6 +57,8 @@ let clientConnection: Connection | undefined;
 let client: Client | undefined;
 let providerCalls = 0;
 let retryableFailureProviderCalls = 0;
+let missingPropertyLoadAttempts = 0;
+let missingPropertyProviderCalls = 0;
 let databaseReady = false;
 
 function prerequisiteError(service: 'PostgreSQL' | 'Temporal', cause: unknown): Error {
@@ -75,6 +97,56 @@ function repeatedlyFailingRetryableProvider(): AiPricingProvider {
   };
 }
 
+function databaseRentalDataRepository(): RentalDataRepository {
+  const number = (value: string | number) => typeof value === 'number' ? value : Number(value);
+
+  return {
+    async findPropertyById(id): Promise<Property | undefined> {
+      const [row] = await db.select().from(properties).where(eq(properties.id, id)).limit(1);
+      return row === undefined ? undefined : propertySchema.parse({
+        ...row,
+        base_price: number(row.base_price),
+        min_price: number(row.min_price),
+        max_price: number(row.max_price),
+        bathrooms: number(row.bathrooms),
+        current_occupancy_rate: number(row.current_occupancy_rate),
+        target_occupancy_rate: number(row.target_occupancy_rate),
+      });
+    },
+    async listMarketSignals(id): Promise<MarketSignal[]> {
+      const rows = await db.select().from(marketSignals).where(eq(marketSignals.property_id, id)).orderBy(asc(marketSignals.date));
+      return rows.map((row) => marketSignalSchema.parse({
+        ...row,
+        competitor_avg_price: number(row.competitor_avg_price),
+        local_event_score: number(row.local_event_score),
+        seasonality_score: number(row.seasonality_score),
+        demand_score: number(row.demand_score),
+      }));
+    },
+  };
+}
+
+function missingPropertyRepository(): RentalDataRepository {
+  return {
+    async findPropertyById() {
+      missingPropertyLoadAttempts += 1;
+      return undefined;
+    },
+    async listMarketSignals() {
+      throw new Error('listMarketSignals must not run when the property is missing.');
+    },
+  };
+}
+
+function noCallProvider(): AiPricingProvider {
+  return {
+    async getRecommendation() {
+      missingPropertyProviderCalls += 1;
+      throw new Error('AI provider must not run when the property is missing.');
+    },
+  };
+}
+
 beforeAll(async () => {
   try {
     await checkDatabaseConnection();
@@ -102,8 +174,11 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  // This test changes only the existing provider seam; leave later tests with the configured provider.
-  setPricingActivityDependencies({ provider: createConfiguredAiPricingProvider() });
+  // Restore all overridden seams so every scenario continues to use real local persistence.
+  setPricingActivityDependencies({
+    provider: createConfiguredAiPricingProvider(),
+    rentalDataRepository: databaseRentalDataRepository(),
+  });
 });
 
 afterAll(async () => {
@@ -118,7 +193,7 @@ afterAll(async () => {
     try {
       if (!databaseReady) return;
 
-      for (const scopedRequest of [request, retryableFailureRequest]) {
+      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest]) {
         const requestFilter = and(
           eq(pricingWorkflowRequests.property_id, scopedRequest.property_id),
           eq(pricingWorkflowRequests.pricing_date, scopedRequest.pricing_date),
@@ -225,5 +300,51 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(metrics.every((metric) => metric.success === 0)).toBe(true);
     expect.soft(metrics.some((metric) => metric.success === 1)).toBe(false);
     expect.soft(JSON.stringify(status)).not.toContain('test-only retryable provider failure');
+  });
+
+  it('does not retry a missing property and safely persists only the failed status', async () => {
+    missingPropertyLoadAttempts = 0;
+    missingPropertyProviderCalls = 0;
+    setPricingActivityDependencies({
+      rentalDataRepository: missingPropertyRepository(),
+      provider: noCallProvider(),
+    });
+
+    const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', {
+      taskQueue: temporalTaskQueue,
+      workflowId: pricingWorkflowId(missingPropertyRequest),
+      args: [missingPropertyRequest],
+    });
+    const workflowResult = await handle.result().catch(() => undefined);
+    const requestFilter = and(
+      eq(pricingWorkflowRequests.property_id, missingPropertyRequest.property_id),
+      eq(pricingWorkflowRequests.pricing_date, missingPropertyRequest.pricing_date),
+    );
+    const status = await (await import('database')).createRecommendationWorkflowRepository().getStatus(missingPropertyRequest);
+    const [{ recommendationCount }] = await db
+      .select({ recommendationCount: count() })
+      .from(pricingRecommendations)
+      .where(and(
+        eq(pricingRecommendations.property_id, missingPropertyRequest.property_id),
+        eq(pricingRecommendations.pricing_date, missingPropertyRequest.pricing_date),
+      ));
+    const [{ metricsCount }] = await db
+      .select({ metricsCount: count() })
+      .from(aiCallMetrics)
+      .innerJoin(pricingWorkflowRequests, eq(aiCallMetrics.request_id, pricingWorkflowRequests.id))
+      .where(requestFilter);
+
+    expect.soft(missingPropertyLoadAttempts).toBe(1);
+    expect.soft(workflowResult).toEqual({ status: 'failed', issue_codes: [] });
+    expect.soft(status).toMatchObject({
+      status: 'failed',
+      issue_codes: [],
+      recommendation: null,
+      metrics: null,
+    });
+    expect.soft(missingPropertyProviderCalls).toBe(0);
+    expect.soft(recommendationCount).toBe(0);
+    expect.soft(metricsCount).toBe(0);
+    expect.soft(JSON.stringify(status ?? {})).not.toMatch(/database|provider|Property not found/i);
   });
 });
