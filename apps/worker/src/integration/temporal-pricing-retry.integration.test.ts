@@ -50,6 +50,12 @@ const missingPropertyRequest: PricingWorkflowRequest = {
   pricing_date: `2099-10-${String((process.pid % 28) + 1).padStart(2, '0')}`,
 };
 
+const invalidAiOutputRequest: PricingWorkflowRequest = {
+  property_id: '10000000-0000-4000-8000-000000000001',
+  // Keep this separate from the retry, missing-property, and manual-test dates.
+  pricing_date: `2099-09-${String((process.pid % 28) + 1).padStart(2, '0')}`,
+};
+
 let worker: Worker | undefined;
 let workerRun: Promise<void> | undefined;
 let workerConnection: NativeConnection | undefined;
@@ -59,6 +65,7 @@ let providerCalls = 0;
 let retryableFailureProviderCalls = 0;
 let missingPropertyLoadAttempts = 0;
 let missingPropertyProviderCalls = 0;
+let invalidAiOutputProviderCalls = 0;
 let databaseReady = false;
 
 function prerequisiteError(service: 'PostgreSQL' | 'Temporal', cause: unknown): Error {
@@ -147,6 +154,20 @@ function noCallProvider(): AiPricingProvider {
   };
 }
 
+function invalidAiOutputProvider(): AiPricingProvider {
+  return {
+    async getRecommendation(deterministic: RuleBasedPricingResult) {
+      invalidAiOutputProviderCalls += 1;
+      return {
+        recommended_price: deterministic.recommended_price + 0.01,
+        explanation: 'Test-only invalid AI metadata that must not be persisted publicly.',
+        confidence_score: 0.8,
+        risk_level: 'low',
+      };
+    },
+  };
+}
+
 beforeAll(async () => {
   try {
     await checkDatabaseConnection();
@@ -193,7 +214,7 @@ afterAll(async () => {
     try {
       if (!databaseReady) return;
 
-      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest]) {
+      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest]) {
         const requestFilter = and(
           eq(pricingWorkflowRequests.property_id, scopedRequest.property_id),
           eq(pricingWorkflowRequests.pricing_date, scopedRequest.pricing_date),
@@ -348,5 +369,48 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(recommendationCount).toBe(0);
     expect.soft(metricsCount).toBe(0);
     expect.soft(JSON.stringify(status ?? {})).not.toMatch(/database|provider|Property not found/i);
+  }, 20_000);
+
+  it('rejects invalid AI metadata without retrying or persisting a recommendation', async () => {
+    invalidAiOutputProviderCalls = 0;
+    setPricingActivityDependencies({ provider: invalidAiOutputProvider() });
+
+    const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', {
+      taskQueue: temporalTaskQueue,
+      workflowId: pricingWorkflowId(invalidAiOutputRequest),
+      args: [invalidAiOutputRequest],
+    });
+    const workflowResult = await handle.result();
+    const requestFilter = and(
+      eq(pricingWorkflowRequests.property_id, invalidAiOutputRequest.property_id),
+      eq(pricingWorkflowRequests.pricing_date, invalidAiOutputRequest.pricing_date),
+    );
+    const status = await (await import('database')).createRecommendationWorkflowRepository().getStatus(invalidAiOutputRequest);
+    const [{ recommendationCount }] = await db
+      .select({ recommendationCount: count() })
+      .from(pricingRecommendations)
+      .where(and(
+        eq(pricingRecommendations.property_id, invalidAiOutputRequest.property_id),
+        eq(pricingRecommendations.pricing_date, invalidAiOutputRequest.pricing_date),
+      ));
+    const metrics = await db
+      .select({ success: aiCallMetrics.success, recommendation_id: aiCallMetrics.recommendation_id })
+      .from(aiCallMetrics)
+      .innerJoin(pricingWorkflowRequests, eq(aiCallMetrics.request_id, pricingWorkflowRequests.id))
+      .where(requestFilter)
+      .orderBy(desc(aiCallMetrics.created_at));
+
+    expect.soft(invalidAiOutputProviderCalls).toBe(1);
+    expect.soft(workflowResult).toEqual({ status: 'rejected', issue_codes: ['price_mismatch_authoritative_result'] });
+    expect.soft(status).toMatchObject({
+      status: 'rejected',
+      issue_codes: ['price_mismatch_authoritative_result'],
+      recommendation: null,
+      metrics: { success: true },
+    });
+    expect.soft(recommendationCount).toBe(0);
+    expect.soft(metrics).toHaveLength(1);
+    expect.soft(metrics[0]).toEqual({ success: 1, recommendation_id: null });
+    expect.soft(JSON.stringify({ workflowResult, status })).not.toMatch(/test-only invalid|credentials|internal exception/i);
   }, 20_000);
 });
