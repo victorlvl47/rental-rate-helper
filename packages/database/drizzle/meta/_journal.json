@@ -10,6 +10,7 @@
       "breakpoints": true
     },
     { "idx": 1, "version": "7", "when": 1786682252780, "tag": "0001_temporal_pricing_workflow", "breakpoints": true },
-    { "idx": 2, "version": "7", "when": 1786682252781, "tag": "0002_truthful_pricing_result", "breakpoints": true }
+    { "idx": 2, "version": "7", "when": 1786682252781, "tag": "0002_truthful_pricing_result", "breakpoints": true },
+    { "idx": 3, "version": "7", "when": 1788879600000, "tag": "0003_allow_missing_property_workflow_requests", "breakpoints": true }
   ]
 }

@@ -315,7 +315,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
       workflowId: pricingWorkflowId(missingPropertyRequest),
       args: [missingPropertyRequest],
     });
-    const workflowResult = await handle.result().catch(() => undefined);
+    const workflowResult = await handle.result();
     const requestFilter = and(
       eq(pricingWorkflowRequests.property_id, missingPropertyRequest.property_id),
       eq(pricingWorkflowRequests.pricing_date, missingPropertyRequest.pricing_date),
