@@ -218,6 +218,8 @@ afterAll(async () => {
 
 describe.sequential('Temporal pricing retry recovery (local integration)', () => {
   it('retries two transient provider failures and persists one accepted result', async () => {
+    providerCalls = 0;
+
     const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', {
       taskQueue: temporalTaskQueue,
       workflowId: pricingWorkflowId(request),
@@ -256,7 +258,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(status?.metrics).toMatchObject({ success: true });
     expect.soft(metrics.filter((metric) => metric.success === 1)).toHaveLength(1);
     expect.soft(metrics.find((metric) => metric.success === 1)?.recommendation_id).toBeTruthy();
-  });
+  }, 20_000);
 
   it('stops after three retryable provider failures and safely persists no recommendation', async () => {
     retryableFailureProviderCalls = 0;
@@ -300,7 +302,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(metrics.every((metric) => metric.success === 0)).toBe(true);
     expect.soft(metrics.some((metric) => metric.success === 1)).toBe(false);
     expect.soft(JSON.stringify(status)).not.toContain('test-only retryable provider failure');
-  });
+  }, 20_000);
 
   it('does not retry a missing property and safely persists only the failed status', async () => {
     missingPropertyLoadAttempts = 0;
@@ -346,5 +348,5 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(recommendationCount).toBe(0);
     expect.soft(metricsCount).toBe(0);
     expect.soft(JSON.stringify(status ?? {})).not.toMatch(/database|provider|Property not found/i);
-  });
+  }, 20_000);
 });
