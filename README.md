@@ -338,11 +338,15 @@ An OpenAI smoke check is optional and manual: configure `AI_PROVIDER=openai`
 and `OPENAI_API_KEY` locally, then run the same start/status sequence; never
 use it as automated coverage.
 
-### Local Temporal retry-recovery integration test
+### Local Temporal pricing integration tests
 
-This focused test starts a real worker on the normal pricing task queue and a
-real workflow. Its test-only provider fails twice with transient errors, then
-returns valid deterministic metadata on the third attempt. It requires the
+This focused suite starts a real worker on the normal pricing task queue and
+real workflows. It includes a concurrent-idempotency check that dispatches two
+identical API start requests with `Promise.all`, holds the accepted workflow
+active at its stub provider boundary, and verifies one `202` start, one safe
+`200` already-started response, one durable request, one deterministic Temporal
+workflow ID, and one accepted recommendation. It also covers retry recovery,
+retry exhaustion, missing properties, and invalid metadata. It requires the
 local Docker services and seeded data, but never uses OpenAI or network AI
 access:
 

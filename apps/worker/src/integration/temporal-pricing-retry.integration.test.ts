@@ -56,12 +56,18 @@ const invalidAiOutputRequest: PricingWorkflowRequest = {
   pricing_date: `2099-09-${String((process.pid % 28) + 1).padStart(2, '0')}`,
 };
 
+const concurrentStartRequest: PricingWorkflowRequest = {
+  property_id: '10000000-0000-4000-8000-000000000001',
+  // The millisecond-derived year makes this request fresh across local test runs
+  // without touching seeded or user-owned records.
+  pricing_date: `${String(7000 + (Date.now() % 2000)).padStart(4, '0')}-08-16`,
+};
+
 let worker: Worker | undefined;
 let workerRun: Promise<void> | undefined;
 let workerConnection: NativeConnection | undefined;
 let clientConnection: Connection | undefined;
 let client: Client | undefined;
-let providerCalls = 0;
 let retryableFailureProviderCalls = 0;
 let missingPropertyLoadAttempts = 0;
 let missingPropertyProviderCalls = 0;
@@ -77,21 +83,26 @@ function prerequisiteError(service: 'PostgreSQL' | 'Temporal', cause: unknown): 
   );
 }
 
-function flakyProvider(): AiPricingProvider {
-  return {
-    async getRecommendation(deterministic: RuleBasedPricingResult) {
-      providerCalls += 1;
-      if (providerCalls < 3) {
-        throw new Error('test-only transient provider failure');
-      }
+function flakyProvider() {
+  let calls = 0;
 
-      return {
-        recommended_price: deterministic.recommended_price,
-        explanation: 'Test-only retry recovery metadata from the deterministic result.',
-        confidence_score: 0.8,
-        risk_level: 'low',
-      };
-    },
+  return {
+    provider: {
+      async getRecommendation(deterministic: RuleBasedPricingResult) {
+        calls += 1;
+        if (calls < 3) {
+          throw new Error('test-only transient provider failure');
+        }
+
+        return {
+          recommended_price: deterministic.recommended_price,
+          explanation: 'Test-only retry recovery metadata from the deterministic result.',
+          confidence_score: 0.8,
+          risk_level: 'low',
+        };
+      },
+    } satisfies AiPricingProvider,
+    calls: () => calls,
   };
 }
 
@@ -183,7 +194,6 @@ beforeAll(async () => {
     throw prerequisiteError('Temporal', error);
   }
 
-  setPricingActivityDependencies({ provider: flakyProvider() });
   worker = await Worker.create({
     activities: await import('../activities/pricing-recommendation-activity.js'),
     connection: workerConnection,
@@ -214,7 +224,7 @@ afterAll(async () => {
     try {
       if (!databaseReady) return;
 
-      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest]) {
+      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest, concurrentStartRequest]) {
         const requestFilter = and(
           eq(pricingWorkflowRequests.property_id, scopedRequest.property_id),
           eq(pricingWorkflowRequests.pricing_date, scopedRequest.pricing_date),
@@ -238,8 +248,92 @@ afterAll(async () => {
 });
 
 describe.sequential('Temporal pricing retry recovery (local integration)', () => {
+  it('concurrently starts one active pricing workflow and resolves the duplicate safely', async () => {
+    let markAiStarted: (() => void) | undefined;
+    let releaseAi: (() => void) | undefined;
+    const aiStarted = new Promise<void>((resolve) => { markAiStarted = resolve; });
+    const aiReleased = new Promise<void>((resolve) => { releaseAi = resolve; });
+
+    setPricingActivityDependencies({
+      provider: {
+        async getRecommendation(deterministic) {
+          markAiStarted?.();
+          await aiReleased;
+          return {
+            recommended_price: deterministic.recommended_price,
+            explanation: 'Concurrent-start test metadata from the deterministic result.',
+            confidence_score: 0.8,
+            risk_level: 'low',
+          };
+        },
+      },
+    });
+
+    // This app shares the integration harness's database client; closing the
+    // Fastify instance must not close that shared client between test cases.
+    const { createApp } = await import(new URL('../../../api/src/app.js', import.meta.url).href);
+    const app = createApp({ logger: false, closeDatabase: async () => undefined });
+    const start = () => app.inject({
+      method: 'POST',
+      url: `/properties/${concurrentStartRequest.property_id}/pricing-recommendations`,
+      payload: { pricing_date: concurrentStartRequest.pricing_date },
+    });
+
+    try {
+      const responses = await Promise.all([start(), start()]);
+      const bodies = responses.map((response) => response.json() as {
+        workflow_id: string;
+        already_started: boolean;
+      });
+      const workflowId = pricingWorkflowId(concurrentStartRequest);
+
+      expect.soft(responses.map((response) => response.statusCode).sort()).toEqual([200, 202]);
+      expect.soft(bodies.map((body) => body.workflow_id)).toEqual([workflowId, workflowId]);
+      expect.soft(bodies.map((body) => body.already_started).sort()).toEqual([false, true]);
+      expect.soft(responses.every((response) => !/database|unique|constraint/i.test(response.body))).toBe(true);
+
+      // Do not let the successful workflow finish until both starts have raced.
+      await aiStarted;
+      releaseAi?.();
+
+      const workflowResult = await client!.workflow.getHandle(workflowId).result();
+      const requestFilter = and(
+        eq(pricingWorkflowRequests.property_id, concurrentStartRequest.property_id),
+        eq(pricingWorkflowRequests.pricing_date, concurrentStartRequest.pricing_date),
+      );
+      const [{ requestCount }] = await db
+        .select({ requestCount: count() })
+        .from(pricingWorkflowRequests)
+        .where(requestFilter);
+      const [{ recommendationCount }] = await db
+        .select({ recommendationCount: count() })
+        .from(pricingRecommendations)
+        .where(and(
+          eq(pricingRecommendations.property_id, concurrentStartRequest.property_id),
+          eq(pricingRecommendations.pricing_date, concurrentStartRequest.pricing_date),
+        ));
+      const statusResponse = await app.inject({
+        method: 'GET',
+        url: `/properties/${concurrentStartRequest.property_id}/pricing-recommendations/status?pricing_date=${concurrentStartRequest.pricing_date}`,
+      });
+
+      expect.soft(workflowResult).toEqual({ status: 'accepted', issue_codes: [] });
+      expect.soft(requestCount).toBe(1);
+      expect.soft(recommendationCount).toBe(1);
+      expect.soft(statusResponse.statusCode).toBe(200);
+      expect.soft(statusResponse.json()).toMatchObject({
+        workflow_id: workflowId,
+        status: 'accepted',
+      });
+    } finally {
+      releaseAi?.();
+      await app.close();
+    }
+  }, 20_000);
+
   it('retries two transient provider failures and persists one accepted result', async () => {
-    providerCalls = 0;
+    const flaky = flakyProvider();
+    setPricingActivityDependencies({ provider: flaky.provider });
 
     const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', {
       taskQueue: temporalTaskQueue,
@@ -268,7 +362,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
       .where(requestFilter)
       .orderBy(desc(aiCallMetrics.created_at));
 
-    expect.soft(providerCalls).toBe(3);
+    expect.soft(flaky.calls()).toBe(3);
     expect.soft(workflowResult).toEqual({ status: 'accepted', issue_codes: [] });
     expect.soft(status?.status).toBe('accepted');
     expect.soft(recommendationCount).toBe(1);
