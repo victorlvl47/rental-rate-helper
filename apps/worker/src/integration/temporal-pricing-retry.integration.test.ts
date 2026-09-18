@@ -14,6 +14,7 @@ import {
   pricingWorkflowRequests,
 } from 'database';
 import {
+  calculateRuleBasedPricing,
   createConfiguredAiPricingProvider,
   type AiPricingProvider,
 } from 'pricing';
@@ -297,7 +298,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
       const [{ requestCount }] = await db.select({ requestCount: count() }).from(pricingWorkflowRequests).where(requestFilter);
       const [{ recommendationCount }] = await db.select({ recommendationCount: count() }).from(pricingRecommendations).where(and(eq(pricingRecommendations.property_id, activeDuplicateRequest.property_id), eq(pricingRecommendations.pricing_date, activeDuplicateRequest.pricing_date)));
       expect.soft(requestCount).toBe(1);
-      expect.soft(recommendationCount).toBeLessThanOrEqual(1);
+      expect.soft(recommendationCount).toBe(1);
     } finally { releaseProvider?.(); await app.close(); }
   }, 20_000);
 
@@ -567,9 +568,11 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
   it('rejects an authoritative 34% deterministic increase through Temporal without mutating it', async () => {
     const property = await databaseRentalDataRepository().findPropertyById(policyConflictRequest.property_id);
     if (!property) throw new Error('Seeded policy-conflict property is required.');
-    const highSignals: MarketSignal[] = [{ property_id: property.id, date: '2026-01-01', competitor_avg_price: property.base_price * 1.2, local_event_score: 1, seasonality_score: 1, demand_score: 1 }];
+    const policyProperty = { ...property, current_occupancy_rate: 0.6, target_occupancy_rate: 0.8 };
+    const highSignals: MarketSignal[] = [{ property_id: policyProperty.id, date: '2026-01-01', competitor_avg_price: policyProperty.base_price * 1.2, local_event_score: 1, seasonality_score: 1, demand_score: 1 }];
+    const expectedDeterministic = calculateRuleBasedPricing(policyProperty, highSignals);
     let authoritativePrice: number | undefined;
-    setPricingActivityDependencies({ rentalDataRepository: { findPropertyById: async () => ({ ...property, current_occupancy_rate: 0.6, target_occupancy_rate: 0.8 }), listMarketSignals: async () => highSignals }, provider: { getRecommendation: async (deterministic) => { authoritativePrice = deterministic.recommended_price; return { recommended_price: deterministic.recommended_price, explanation: 'Policy-conflict test metadata.', confidence_score: 0.8, risk_level: 'low' }; } } });
+    setPricingActivityDependencies({ rentalDataRepository: { findPropertyById: async () => policyProperty, listMarketSignals: async () => highSignals }, provider: { getRecommendation: async (deterministic) => { authoritativePrice = deterministic.recommended_price; return { recommended_price: deterministic.recommended_price, explanation: 'Policy-conflict test metadata.', confidence_score: 0.8, risk_level: 'low' }; } } });
     const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', { taskQueue: temporalTaskQueue, workflowId: pricingWorkflowId(policyConflictRequest), args: [policyConflictRequest] });
     const result = await handle.result();
     const status = await (await import('database')).createRecommendationWorkflowRepository().getStatus(policyConflictRequest);
@@ -577,8 +580,9 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(result).toEqual({ status: 'rejected', issue_codes: ['authoritative_result_exceeds_30_percent'] });
     expect.soft(status).toMatchObject({ status: 'rejected', issue_codes: ['authoritative_result_exceeds_30_percent'], recommendation: null });
     expect.soft(recommendation).toBeUndefined();
-    expect.soft(authoritativePrice).toBeGreaterThan(property.base_price * 1.3);
-    expect.soft(authoritativePrice).toBeLessThanOrEqual(property.base_price * 1.35);
+    expect.soft(expectedDeterministic.adjustments.total).toBeGreaterThan(0.3);
+    expect.soft(expectedDeterministic.adjustments.total).toBeLessThanOrEqual(0.35);
+    expect.soft(authoritativePrice).toBe(expectedDeterministic.recommended_price);
   }, 20_000);
 
   it('safely terminates a malformed direct workflow input after one non-retryable boundary check', async () => {
