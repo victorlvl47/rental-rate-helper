@@ -28,5 +28,5 @@ export type {
   RecommendationValidationIssueCode,
   RecommendationValidationResult,
 } from './recommendation-validation.js';
-export { aiCallMetricsSchema, pricingWorkflowDataSchema, pricingWorkflowId, pricingWorkflowRequestSchema, pricingWorkflowStatusResultSchema, pricingWorkflowStatusSchema } from './pricing-workflow.js';
-export type { AiCallMetrics, PricingWorkflowData, PricingWorkflowRequest, PricingWorkflowStatus, PricingWorkflowStatusResult } from './pricing-workflow.js';
+export { aiCallMetricsSchema, dashboardRecommendationSchema, dashboardSummarySchema, pricingWorkflowDataSchema, pricingWorkflowId, pricingWorkflowRequestSchema, pricingWorkflowStatusResultSchema, pricingWorkflowStatusSchema } from './pricing-workflow.js';
+export type { AiCallMetrics, DashboardRecommendation, DashboardSummary, PricingWorkflowData, PricingWorkflowRequest, PricingWorkflowStatus, PricingWorkflowStatusResult } from './pricing-workflow.js';

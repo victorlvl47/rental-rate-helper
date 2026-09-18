@@ -5,7 +5,7 @@ import type { PricingWorkflowRequest, RuleBasedPricingResult } from 'shared';
 
 const request: PricingWorkflowRequest = { property_id: '10000000-0000-4000-8000-000000000001', pricing_date: '2026-09-14' };
 const deterministic: RuleBasedPricingResult = { property_id: request.property_id, signal_count: 0, market_signals_used: false, base_price: 100, minimum_recommended_price: 95, recommended_price: 100, maximum_recommended_price: 105, adjustments: { occupancy: 0, demand: 0, competitor: 0, seasonality: 0, local_event: 0, total: 0 } };
-const repository = { createOrResolve: async () => ({ id: 'id', workflow_id: 'workflow', status: 'pending' as const, existing: false }), updateStatus: async () => undefined, saveAccepted: async () => 'id', saveMetrics: async () => undefined, getStatus: async () => undefined };
+const repository = { createOrResolve: async () => ({ id: 'id', workflow_id: 'workflow', status: 'pending' as const, existing: false }), updateStatus: async () => undefined, saveAccepted: async () => 'id', saveMetrics: async () => undefined, getStatus: async () => undefined, listAcceptedRecommendations: async () => [], getDashboardSummary: async () => ({ total_properties: 0, accepted_recommendations: 0, average_ai_latency_ms: null, estimated_ai_cost_usd: null, validation_failures: 0, recent_failed_workflows: [] }) };
 
 describe('pricing activities', () => {
   it('uses stub output with truthful null usage metrics', async () => {

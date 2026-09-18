@@ -17,3 +17,21 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.page { max-width: 1120px; margin: 0 auto; padding: 3rem 1.25rem; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.1; font-weight: 700; letter-spacing: -.035em; color: #0f172a; }
+h2, h3 { font-weight: 650; color: #172554; }
+.lead { max-width: 48rem; margin: 1rem 0 2rem; color: #475569; line-height: 1.65; }
+.eyebrow { color: #c2410c; font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.nav-link { border-radius: .5rem; padding: .45rem .65rem; color: #475569; }
+.nav-link:hover, .nav-link:focus-visible { background: #fff7ed; color: #c2410c; outline: none; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.metric, .panel, .property-card, .recommendation, .status-card { border: 1px solid #e2e8f0; border-radius: 1rem; background: white; box-shadow: 0 1px 2px rgb(15 23 42 / .04); }
+.metric { padding: 1.2rem; }.metric p, dt { color: #64748b; font-size: .85rem; }.metric strong { display: block; margin-top: .5rem; color: #0f172a; font-size: 1.35rem; }
+.panel, .status-card { padding: 1.5rem; }.panel p, .status-card p { color: #475569; line-height: 1.55; }.panel pre { margin: 1rem 0; overflow-x: auto; border-radius: .5rem; background: #0f172a; padding: 1rem; color: #e2e8f0; }
+.controls { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; }.controls label { display: grid; gap: .35rem; color: #334155; font-size: .875rem; font-weight: 600; }.controls select, .controls input { min-width: 180px; border: 1px solid #cbd5e1; border-radius: .5rem; background: white; padding: .65rem .75rem; color: #0f172a; }
+.property-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }.property-card { display: grid; gap: 1.25rem; padding: 1.35rem; }.property-card dl, .recommendation dl { display: grid; gap: .7rem; }.property-card dd, .recommendation dd { color: #1e293b; font-weight: 600; }.property-card button { border-radius: .55rem; background: #ea580c; padding: .7rem 1rem; color: white; font-weight: 700; }.property-card button:hover { background: #c2410c; }.property-card button:disabled { cursor: not-allowed; background: #94a3b8; }
+.status-card { margin: 0 0 1.5rem; border-color: #fed7aa; background: #fffaf5; }.status-card h3 { margin: .35rem 0 .65rem; }.text-link { display: inline-block; margin-top: .65rem; color: #c2410c; font-weight: 700; text-decoration: underline; }
+.recommendation-list { display: grid; gap: 1rem; }.recommendation { display: grid; gap: 1.25rem; padding: 1.4rem; }.recommendation p { margin-top: .6rem; color: #475569; line-height: 1.5; }.recommendation dl { grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
+.safe-error { margin: 1rem 0; border: 1px solid #fecaca; border-radius: .65rem; background: #fef2f2; padding: 1rem; color: #991b1b; }.loading { color: #64748b; }
+@media (max-width: 560px) { .page { padding-top: 2rem; }.nav-link { padding: .4rem; font-size: .76rem; }.page h1 { font-size: 2rem; } }
