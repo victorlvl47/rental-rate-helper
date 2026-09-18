@@ -3,7 +3,7 @@ import { asc, eq } from 'drizzle-orm';
 import { createRecommendationWorkflowRepository, db, marketSignals, properties, type RecommendationWorkflowRepository } from 'database';
 import { calculateRuleBasedPricing, createConfiguredAiPricingProvider, PRICING_PROMPT_VERSION, type AiPricingProvider, validateAiPricingRecommendation } from 'pricing';
 import type { AiCallMetrics, PricingWorkflowData, PricingWorkflowRequest, PricingWorkflowStatus } from 'shared';
-import { marketSignalSchema, propertySchema, type MarketSignal, type Property } from 'shared';
+import { marketSignalSchema, pricingWorkflowRequestSchema, propertySchema, type MarketSignal, type Property } from 'shared';
 
 export type PricingFailureType = 'INVALID_REQUEST' | 'PROPERTY_NOT_FOUND' | 'VALIDATION_REJECTED' | 'PROVIDER_FAILURE' | 'PERSISTENCE_FAILURE';
 const terminalFailure = (message: string, type: PricingFailureType) => ApplicationFailure.nonRetryable(message, type);
@@ -18,7 +18,7 @@ const rentalDataRepository: RentalDataRepository = {
 export interface PricingActivityDependencies { rentalDataRepository: RentalDataRepository; repository: RecommendationWorkflowRepository; provider: AiPricingProvider; }
 let dependencies: PricingActivityDependencies = { rentalDataRepository, repository: createRecommendationWorkflowRepository(), provider: createConfiguredAiPricingProvider() };
 export function setPricingActivityDependencies(next: Partial<PricingActivityDependencies>): void { dependencies = { ...dependencies, ...next }; }
-export async function resolvePricingRequest(request: PricingWorkflowRequest, workflowId: string) { try { return await dependencies.repository.createOrResolve(request, workflowId); } catch { throw transientFailure('Pricing request persistence failed.', 'PERSISTENCE_FAILURE'); } }
+export async function resolvePricingRequest(request: PricingWorkflowRequest, workflowId: string) { const parsed = pricingWorkflowRequestSchema.safeParse(request); if (!parsed.success) throw terminalFailure('Pricing request is invalid.', 'INVALID_REQUEST'); try { return await dependencies.repository.createOrResolve(parsed.data, workflowId); } catch { throw transientFailure('Pricing request persistence failed.', 'PERSISTENCE_FAILURE'); } }
 export async function markPricingStatus(request: PricingWorkflowRequest, status: PricingWorkflowStatus, issueCodes: string[] = []) { try { await dependencies.repository.updateStatus(request, status, issueCodes); } catch { throw transientFailure('Pricing request persistence failed.', 'PERSISTENCE_FAILURE'); } }
 export async function loadPricingData(request: PricingWorkflowRequest): Promise<Omit<PricingWorkflowData, 'deterministic'>> { try { const property = await dependencies.rentalDataRepository.findPropertyById(request.property_id); if (!property) throw terminalFailure('Property not found.', 'PROPERTY_NOT_FOUND'); return { property, signals: await dependencies.rentalDataRepository.listMarketSignals(request.property_id) }; } catch (error) { if (error instanceof ApplicationFailure) throw error; throw transientFailure('Pricing data load failed.', 'PERSISTENCE_FAILURE'); } }
 export async function calculatePricing(data: Omit<PricingWorkflowData, 'deterministic'>): Promise<PricingWorkflowData> { try { return { ...data, deterministic: calculateRuleBasedPricing(data.property, data.signals) }; } catch { throw terminalFailure('Pricing request is invalid.', 'INVALID_REQUEST'); } }

@@ -6,6 +6,7 @@ import {
   aiCallMetrics,
   checkDatabaseConnection,
   closeDatabase,
+  createRecommendationWorkflowRepository,
   db,
   marketSignals,
   properties,
@@ -63,6 +64,18 @@ const concurrentStartRequest: PricingWorkflowRequest = {
   pricing_date: `${String(7000 + (Date.now() % 2000)).padStart(4, '0')}-08-16`,
 };
 
+const activeDuplicateRequest: PricingWorkflowRequest = {
+  property_id: '10000000-0000-4000-8000-000000000001',
+  pricing_date: `${String(5000 + (Date.now() % 2000)).padStart(4, '0')}-07-15`,
+};
+
+const policyConflictRequest: PricingWorkflowRequest = {
+  property_id: '10000000-0000-4000-8000-000000000001',
+  pricing_date: `${String(3000 + (Date.now() % 2000)).padStart(4, '0')}-06-14`,
+};
+
+const malformedWorkflowId = `malformed-pricing-request-${process.pid}-${Date.now()}`;
+
 let worker: Worker | undefined;
 let workerRun: Promise<void> | undefined;
 let workerConnection: NativeConnection | undefined;
@@ -72,6 +85,7 @@ let retryableFailureProviderCalls = 0;
 let missingPropertyLoadAttempts = 0;
 let missingPropertyProviderCalls = 0;
 let invalidAiOutputProviderCalls = 0;
+let malformedProviderCalls = 0;
 let databaseReady = false;
 
 function prerequisiteError(service: 'PostgreSQL' | 'Temporal', cause: unknown): Error {
@@ -209,6 +223,7 @@ afterEach(() => {
   setPricingActivityDependencies({
     provider: createConfiguredAiPricingProvider(),
     rentalDataRepository: databaseRentalDataRepository(),
+    repository: createRecommendationWorkflowRepository(),
   });
 });
 
@@ -224,7 +239,7 @@ afterAll(async () => {
     try {
       if (!databaseReady) return;
 
-      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest, concurrentStartRequest]) {
+      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest, concurrentStartRequest, activeDuplicateRequest, policyConflictRequest]) {
         const requestFilter = and(
           eq(pricingWorkflowRequests.property_id, scopedRequest.property_id),
           eq(pricingWorkflowRequests.pricing_date, scopedRequest.pricing_date),
@@ -248,6 +263,44 @@ afterAll(async () => {
 });
 
 describe.sequential('Temporal pricing retry recovery (local integration)', () => {
+  it('returns an already-started response only after the first workflow is active', async () => {
+    let releaseProvider: (() => void) | undefined;
+    const providerEntered = new Promise<void>((resolve) => {
+      setPricingActivityDependencies({
+        provider: {
+          async getRecommendation(deterministic) {
+            resolve();
+            await new Promise<void>((release) => { releaseProvider = release; });
+            return { recommended_price: deterministic.recommended_price, explanation: 'Active duplicate test metadata.', confidence_score: 0.8, risk_level: 'low' };
+          },
+        },
+      });
+    });
+    const { createApp } = await import(new URL('../../../api/src/app.js', import.meta.url).href);
+    const app = createApp({ logger: false, closeDatabase: async () => undefined });
+    const start = () => app.inject({ method: 'POST', url: `/properties/${activeDuplicateRequest.property_id}/pricing-recommendations`, payload: { pricing_date: activeDuplicateRequest.pricing_date } });
+    try {
+      const first = await start();
+      expect.soft(first.statusCode).toBe(202);
+      await providerEntered;
+      const workflowId = pricingWorkflowId(activeDuplicateRequest);
+      const description = await client!.workflow.getHandle(workflowId).describe();
+      expect.soft(description.status.name).toBe('RUNNING');
+      const second = await start();
+      expect.soft(second.statusCode).toBe(200);
+      expect.soft(first.json()).toMatchObject({ workflow_id: workflowId, already_started: false });
+      expect.soft(second.json()).toEqual({ workflow_id: workflowId, status: 'pending', already_started: true });
+      expect.soft(`${first.body}${second.body}`).not.toMatch(/database|unique|constraint/i);
+      releaseProvider?.();
+      expect.soft(await client!.workflow.getHandle(workflowId).result()).toEqual({ status: 'accepted', issue_codes: [] });
+      const requestFilter = and(eq(pricingWorkflowRequests.property_id, activeDuplicateRequest.property_id), eq(pricingWorkflowRequests.pricing_date, activeDuplicateRequest.pricing_date));
+      const [{ requestCount }] = await db.select({ requestCount: count() }).from(pricingWorkflowRequests).where(requestFilter);
+      const [{ recommendationCount }] = await db.select({ recommendationCount: count() }).from(pricingRecommendations).where(and(eq(pricingRecommendations.property_id, activeDuplicateRequest.property_id), eq(pricingRecommendations.pricing_date, activeDuplicateRequest.pricing_date)));
+      expect.soft(requestCount).toBe(1);
+      expect.soft(recommendationCount).toBeLessThanOrEqual(1);
+    } finally { releaseProvider?.(); await app.close(); }
+  }, 20_000);
+
   it('concurrently starts one active pricing workflow and resolves the duplicate safely', async () => {
     let markAiStarted: (() => void) | undefined;
     let releaseAi: (() => void) | undefined;
@@ -371,8 +424,11 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
       status?.recommendation?.ai_metadata.recommended_price,
     );
     expect.soft(status?.metrics).toMatchObject({ success: true });
+    expect.soft(metrics).toHaveLength(3);
+    expect.soft(metrics.filter((metric) => metric.success === 0)).toHaveLength(2);
     expect.soft(metrics.filter((metric) => metric.success === 1)).toHaveLength(1);
     expect.soft(metrics.find((metric) => metric.success === 1)?.recommendation_id).toBeTruthy();
+    expect.soft(metrics.filter((metric) => metric.success === 0).every((metric) => metric.recommendation_id === null)).toBe(true);
   }, 20_000);
 
   it('stops after three retryable provider failures and safely persists no recommendation', async () => {
@@ -506,5 +562,40 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(metrics).toHaveLength(1);
     expect.soft(metrics[0]).toEqual({ success: 1, recommendation_id: null });
     expect.soft(JSON.stringify({ workflowResult, status })).not.toMatch(/test-only invalid|credentials|internal exception/i);
+  }, 20_000);
+
+  it('rejects an authoritative 34% deterministic increase through Temporal without mutating it', async () => {
+    const property = await databaseRentalDataRepository().findPropertyById(policyConflictRequest.property_id);
+    if (!property) throw new Error('Seeded policy-conflict property is required.');
+    const highSignals: MarketSignal[] = [{ property_id: property.id, date: '2026-01-01', competitor_avg_price: property.base_price * 1.2, local_event_score: 1, seasonality_score: 1, demand_score: 1 }];
+    let authoritativePrice: number | undefined;
+    setPricingActivityDependencies({ rentalDataRepository: { findPropertyById: async () => ({ ...property, current_occupancy_rate: 0.6, target_occupancy_rate: 0.8 }), listMarketSignals: async () => highSignals }, provider: { getRecommendation: async (deterministic) => { authoritativePrice = deterministic.recommended_price; return { recommended_price: deterministic.recommended_price, explanation: 'Policy-conflict test metadata.', confidence_score: 0.8, risk_level: 'low' }; } } });
+    const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', { taskQueue: temporalTaskQueue, workflowId: pricingWorkflowId(policyConflictRequest), args: [policyConflictRequest] });
+    const result = await handle.result();
+    const status = await (await import('database')).createRecommendationWorkflowRepository().getStatus(policyConflictRequest);
+    const [recommendation] = await db.select().from(pricingRecommendations).where(and(eq(pricingRecommendations.property_id, policyConflictRequest.property_id), eq(pricingRecommendations.pricing_date, policyConflictRequest.pricing_date))).limit(1);
+    expect.soft(result).toEqual({ status: 'rejected', issue_codes: ['authoritative_result_exceeds_30_percent'] });
+    expect.soft(status).toMatchObject({ status: 'rejected', issue_codes: ['authoritative_result_exceeds_30_percent'], recommendation: null });
+    expect.soft(recommendation).toBeUndefined();
+    expect.soft(authoritativePrice).toBeGreaterThan(property.base_price * 1.3);
+    expect.soft(authoritativePrice).toBeLessThanOrEqual(property.base_price * 1.35);
+  }, 20_000);
+
+  it('safely terminates a malformed direct workflow input after one non-retryable boundary check', async () => {
+    malformedProviderCalls = 0;
+    let repositoryCalls = 0;
+    setPricingActivityDependencies({
+      repository: { createOrResolve: async () => { repositoryCalls += 1; throw new Error('must not persist malformed input'); }, updateStatus: async () => undefined, saveAccepted: async () => 'unused', saveMetrics: async () => undefined, getStatus: async () => undefined },
+      provider: { getRecommendation: async () => { malformedProviderCalls += 1; throw new Error('must not call provider'); } },
+    });
+    const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', { taskQueue: temporalTaskQueue, workflowId: malformedWorkflowId, args: [{ property_id: 'not-a-uuid', pricing_date: '2099-01-01' } as unknown as PricingWorkflowRequest] });
+    const result = await handle.result();
+    const history = await handle.fetchHistory();
+    const resolveAttempts = (history.events ?? []).filter((event) => event.activityTaskScheduledEventAttributes?.activityType?.name === 'resolvePricingRequest');
+    expect.soft(result).toEqual({ status: 'failed', issue_codes: [] });
+    expect.soft(resolveAttempts).toHaveLength(1);
+    expect.soft(repositoryCalls).toBe(0);
+    expect.soft(malformedProviderCalls).toBe(0);
+    expect.soft(JSON.stringify(result)).not.toMatch(/not-a-uuid|credentials|stack|internal/i);
   }, 20_000);
 });

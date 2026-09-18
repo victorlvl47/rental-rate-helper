@@ -331,6 +331,30 @@ issue codes, accepted metadata, and known metrics; raw prompts/provider bodies
 and credentials are never stored or returned. The stub has no token or cost
 usage, so those fields remain `null` rather than being invented.
 
+For a reproducible end-to-end smoke run, choose a fresh date (shown here as
+`2098-07-15`), wait until the status is `accepted`, then repeat the POST. Keep
+the API and worker commands above running in separate terminals:
+
+```bash
+property_id=10000000-0000-4000-8000-000000000001
+pricing_date=2098-07-15
+curl -i -X POST "http://localhost:8080/properties/$property_id/pricing-recommendations" \
+  -H 'content-type: application/json' -d "{\"pricing_date\":\"$pricing_date\"}"
+until curl --fail --silent "http://localhost:8080/properties/$property_id/pricing-recommendations/status?pricing_date=$pricing_date" | grep -q '"status":"accepted"'; do sleep 1; done
+curl -i -X POST "http://localhost:8080/properties/$property_id/pricing-recommendations" \
+  -H 'content-type: application/json' -d "{\"pricing_date\":\"$pricing_date\"}"
+
+missing_property_id=20000000-0000-4000-8000-000000000099
+curl -i -X POST "http://localhost:8080/properties/$missing_property_id/pricing-recommendations" \
+  -H 'content-type: application/json' -d '{"pricing_date":"2098-07-16"}'
+until curl --fail --silent "http://localhost:8080/properties/$missing_property_id/pricing-recommendations/status?pricing_date=2098-07-16" | grep -q '"status":"failed"'; do sleep 1; done
+curl -i "http://localhost:8080/properties/$missing_property_id/pricing-recommendations/status?pricing_date=2098-07-16"
+```
+
+The first start returns `202`; a completed duplicate returns `200` with
+`"already_started":true`. The missing-property start is also `202`, and its
+eventual status is safely `failed` with no provider or database detail.
+
 `pnpm --filter api eval:pricing` remains the credential-free, deterministic
 offline validation suite. It does not need PostgreSQL, Temporal, or OpenAI.
 The workflow path above is local/manual verification with the stub provider.
