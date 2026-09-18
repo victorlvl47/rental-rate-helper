@@ -565,7 +565,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(JSON.stringify({ workflowResult, status })).not.toMatch(/test-only invalid|credentials|internal exception/i);
   }, 20_000);
 
-  it('rejects an authoritative 34% deterministic increase through Temporal without mutating it', async () => {
+  it('rejects an authoritative deterministic increase above 30% through Temporal without mutating it', async () => {
     const property = await databaseRentalDataRepository().findPropertyById(policyConflictRequest.property_id);
     if (!property) throw new Error('Seeded policy-conflict property is required.');
     const policyProperty = { ...property, current_occupancy_rate: 0.6, target_occupancy_rate: 0.8 };
