@@ -15,6 +15,9 @@
   "dependencies": {
     "@fastify/cors": "^11.3.0",
     "database": "workspace:*",
+    "pricing": "workspace:*",
+    "@temporalio/client": "^1.13.2",
+    "@temporalio/common": "^1.13.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.2",
     "shared": "workspace:*"

@@ -298,6 +298,92 @@ validation; invalid metadata is safely rejected with a `422` response and its
 safe issue codes. The preview is read-only, so a rejected response does not
 save a recommendation.
 
+## Temporal pricing workflow
+
+The durable recommendation path is separate from both preview endpoints. A
+request is idempotent by `property_id + pricing_date`; the API and worker use
+the same deterministic workflow ID (`pricing-<property-id>-<YYYY-MM-DD>`).
+The deterministic engine owns the price and range. AI supplies only validated
+explanation, confidence, and risk metadata.
+
+Run the local stub path in this order:
+
+```bash
+pnpm infra:up
+pnpm --filter database db:migrate
+pnpm --filter database db:seed
+AI_PROVIDER=stub pnpm --filter api dev
+pnpm --filter worker dev
+```
+
+Start a request (the response is immediate; it does not wait for AI):
+
+```bash
+curl -i -X POST http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-recommendations \
+  -H 'content-type: application/json' \
+  -d '{"pricing_date":"2026-09-14"}'
+curl -i 'http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-recommendations/status?pricing_date=2026-09-14'
+```
+
+Repeat the POST with the same date to resolve the same logical workflow and
+durable request. Status responses expose only lifecycle state, safe validation
+issue codes, accepted metadata, and known metrics; raw prompts/provider bodies
+and credentials are never stored or returned. The stub has no token or cost
+usage, so those fields remain `null` rather than being invented.
+
+For a reproducible end-to-end smoke run, choose a fresh date (shown here as
+`2098-07-15`), wait until the status is `accepted`, then repeat the POST. Keep
+the API and worker commands above running in separate terminals:
+
+```bash
+property_id=10000000-0000-4000-8000-000000000001
+pricing_date=2098-07-15
+curl -i -X POST "http://localhost:8080/properties/$property_id/pricing-recommendations" \
+  -H 'content-type: application/json' -d "{\"pricing_date\":\"$pricing_date\"}"
+until curl --fail --silent "http://localhost:8080/properties/$property_id/pricing-recommendations/status?pricing_date=$pricing_date" | grep -q '"status":"accepted"'; do sleep 1; done
+curl -i -X POST "http://localhost:8080/properties/$property_id/pricing-recommendations" \
+  -H 'content-type: application/json' -d "{\"pricing_date\":\"$pricing_date\"}"
+
+missing_property_id=20000000-0000-4000-8000-000000000099
+curl -i -X POST "http://localhost:8080/properties/$missing_property_id/pricing-recommendations" \
+  -H 'content-type: application/json' -d '{"pricing_date":"2098-07-16"}'
+until curl --fail --silent "http://localhost:8080/properties/$missing_property_id/pricing-recommendations/status?pricing_date=2098-07-16" | grep -q '"status":"failed"'; do sleep 1; done
+curl -i "http://localhost:8080/properties/$missing_property_id/pricing-recommendations/status?pricing_date=2098-07-16"
+```
+
+The first start returns `202`; a completed duplicate returns `200` with
+`"already_started":true`. The missing-property start is also `202`, and its
+eventual status is safely `failed` with no provider or database detail.
+
+`pnpm --filter api eval:pricing` remains the credential-free, deterministic
+offline validation suite. It does not need PostgreSQL, Temporal, or OpenAI.
+The workflow path above is local/manual verification with the stub provider.
+An OpenAI smoke check is optional and manual: configure `AI_PROVIDER=openai`
+and `OPENAI_API_KEY` locally, then run the same start/status sequence; never
+use it as automated coverage.
+
+### Local Temporal pricing integration tests
+
+This focused suite starts a real worker on the normal pricing task queue and
+real workflows. It includes a concurrent-idempotency check that dispatches two
+identical API start requests with `Promise.all`, holds the accepted workflow
+active at its stub provider boundary, and verifies one `202` start, one safe
+`200` already-started response, one durable request, one deterministic Temporal
+workflow ID, and one accepted recommendation. It also covers retry recovery,
+retry exhaustion, missing properties, and invalid metadata. It requires the
+local Docker services and seeded data, but never uses OpenAI or network AI
+access:
+
+```bash
+pnpm infra:up
+pnpm --filter database db:migrate
+pnpm --filter database db:seed
+pnpm --filter worker test:temporal-retry
+```
+
+The test uses a unique test date and removes its scoped workflow request,
+recommendation, and metrics rows during teardown.
+
 The current pricing policies intentionally expose an unresolved conflict: the
 deterministic engine permits a total adjustment up to ±35%, while validation
 rejects a single price increase above 30%. An authoritative result above 30%
