@@ -465,6 +465,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(workflowResult).toEqual({ status: 'failed', issue_codes: [] });
     expect.soft(status).toMatchObject({
       status: 'failed',
+      failure_code: 'PROVIDER_FAILURE',
       issue_codes: [],
       recommendation: null,
       metrics: { success: false },
