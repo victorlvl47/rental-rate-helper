@@ -12,7 +12,11 @@ export {
 
 export type { MarketSignal, Property, RentalMarket } from './rental-market.js';
 
-export { ruleBasedPricingResultSchema } from './rule-based-pricing.js';
+export {
+  MAX_PRICE_INCREASE_RATIO,
+  priceExceedsMaximumIncrease,
+  ruleBasedPricingResultSchema,
+} from './rule-based-pricing.js';
 export type { RuleBasedPricingResult } from './rule-based-pricing.js';
 
 export { aiPricingPreviewResponseSchema, aiPricingRecommendationSchema } from './ai-pricing-recommendation.js';

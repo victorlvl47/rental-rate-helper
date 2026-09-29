@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { propertySchema, ruleBasedPricingResultSchema } from 'shared';
+import { MAX_PRICE_INCREASE_RATIO, propertySchema, ruleBasedPricingResultSchema } from 'shared';
 
 import { validateAiPricingRecommendation } from './validate-ai-pricing-recommendation.js';
 
@@ -92,7 +92,7 @@ describe('validateAiPricingRecommendation', () => {
     expect(
       validateAiPricingRecommendation(property, wideRange, {
         ...validRecommendation,
-        recommended_price: 131,
+        recommended_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO) + 0.01,
       }),
     ).toMatchObject({
       valid: false,
@@ -106,17 +106,17 @@ describe('validateAiPricingRecommendation', () => {
   it('accepts an authoritative deterministic result at the 30% business limit', () => {
     const policyBoundary = ruleBasedPricingResultSchema.parse({
       ...ruleBasedPricing,
-      minimum_recommended_price: 123.5,
-      recommended_price: 130,
-      maximum_recommended_price: 136.5,
-      adjustments: { ...ruleBasedPricing.adjustments, total: 0.3 },
+      minimum_recommended_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO) - 6.5,
+      recommended_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO),
+      maximum_recommended_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO) + 6.5,
+      adjustments: { ...ruleBasedPricing.adjustments, total: MAX_PRICE_INCREASE_RATIO },
     });
-    const recommendation = { ...validRecommendation, recommended_price: 130 };
+    const recommendation = { ...validRecommendation, recommended_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO) };
 
     expect(validateAiPricingRecommendation(property, policyBoundary, recommendation)).toEqual({
       valid: true,
       recommendation,
     });
-    expect(policyBoundary.recommended_price).toBe(130);
+    expect(policyBoundary.recommended_price).toBe(property.base_price * (1 + MAX_PRICE_INCREASE_RATIO));
   });
 });

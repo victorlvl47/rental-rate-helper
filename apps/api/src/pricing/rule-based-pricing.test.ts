@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ruleBasedPricingResultSchema, type MarketSignal, type Property } from 'shared';
+import { MAX_PRICE_INCREASE_RATIO, ruleBasedPricingResultSchema, type MarketSignal, type Property } from 'shared';
 
 import { calculateRuleBasedPricing } from './rule-based-pricing.js';
 
@@ -63,12 +63,27 @@ describe('calculateRuleBasedPricing', () => {
       [withSignal({ competitor_avg_price: 0, demand_score: 0, seasonality_score: 0, local_event_score: 0 })],
     );
 
-    expect(positive.adjustments.total).toBe(0.3);
+    expect(positive.adjustments.total).toBe(MAX_PRICE_INCREASE_RATIO);
     expect(negative.adjustments.total).toBe(-0.35);
   });
 
-  it('rejects a property minimum above the 30% maximum increase instead of producing a contradictory price', () => {
-    expect(() => calculateRuleBasedPricing(withProperty({ min_price: 130.01, max_price: 200 }), [signal])).toThrow(
+  it('accepts a property minimum exactly at the maximum increase boundary and produces an authoritative price', () => {
+    const boundaryProperty = withProperty({
+      min_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO),
+      current_occupancy_rate: 0,
+      target_occupancy_rate: 1,
+    });
+    const result = calculateRuleBasedPricing(
+      boundaryProperty,
+      [withSignal({ competitor_avg_price: 200, demand_score: 1, seasonality_score: 1, local_event_score: 1 })],
+    );
+
+    expect(result.adjustments.total).toBe(MAX_PRICE_INCREASE_RATIO);
+    expect(result.recommended_price).toBe(boundaryProperty.min_price);
+  });
+
+  it('rejects a property minimum one cent above the maximum increase boundary instead of producing a contradictory price', () => {
+    expect(() => calculateRuleBasedPricing(withProperty({ min_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO) + 0.01, max_price: 200 }), [signal])).toThrow(
       'Property minimum price exceeds the maximum allowed price increase.',
     );
   });

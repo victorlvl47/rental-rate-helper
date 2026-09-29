@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ruleBasedPricingResultSchema } from './index.js';
+import { MAX_PRICE_INCREASE_RATIO, priceExceedsMaximumIncrease, ruleBasedPricingResultSchema } from './index.js';
 
 const result = {
   property_id: '550e8400-e29b-41d4-a716-446655440000',
@@ -67,11 +67,16 @@ describe('rule-based pricing result contract', () => {
       { ...result.adjustments, competitor: 0.11 },
       { ...result.adjustments, seasonality: -0.06 },
       { ...result.adjustments, local_event: 0.06 },
-      { ...result.adjustments, total: 0.31 },
+      { ...result.adjustments, total: MAX_PRICE_INCREASE_RATIO + 0.01 },
       { ...result.adjustments, total: -0.36 },
     ]) {
       expect(ruleBasedPricingResultSchema.safeParse({ ...result, adjustments }).success).toBe(false);
     }
+  });
+
+  it('keeps the cents-safe maximum-increase boundary inclusive', () => {
+    expect(priceExceedsMaximumIncrease(100 * (1 + MAX_PRICE_INCREASE_RATIO), 100)).toBe(false);
+    expect(priceExceedsMaximumIncrease(100 * (1 + MAX_PRICE_INCREASE_RATIO) + 0.01, 100)).toBe(true);
   });
 
   it('enforces the final cents-rounded price range ordering', () => {

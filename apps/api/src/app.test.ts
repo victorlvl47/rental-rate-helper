@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   aiPricingPreviewResponseSchema,
   aiPricingValidationRejectionResponseSchema,
+  MAX_PRICE_INCREASE_RATIO,
   marketSignalSchema,
   propertySchema,
   RENTAL_MARKETS,
@@ -483,7 +484,7 @@ describe('AI pricing preview route', () => {
         competitor: 0.1,
         seasonality: 0.05,
         local_event: 0.05,
-        total: 0.3,
+        total: MAX_PRICE_INCREASE_RATIO,
       },
     });
     const pricingCalculator = vi.fn(() => policyBoundaryPricing);
@@ -508,7 +509,7 @@ describe('AI pricing preview route', () => {
 
     expect(response.statusCode).toBe(200);
     expect(aiPricingPreviewResponseSchema.parse(response.json())).toMatchObject({
-      rule_based_pricing: { recommended_price: 240.5, adjustments: { total: 0.3 } },
+      rule_based_pricing: { recommended_price: 240.5, adjustments: { total: MAX_PRICE_INCREASE_RATIO } },
       ai_recommendation: { recommended_price: 240.5 },
     });
     expect(pricingCalculator).toHaveBeenCalledTimes(1);

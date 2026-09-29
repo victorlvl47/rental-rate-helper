@@ -19,6 +19,7 @@ import {
   type AiPricingProvider,
 } from 'pricing';
 import {
+  MAX_PRICE_INCREASE_RATIO,
   marketSignalSchema,
   pricingWorkflowId,
   propertySchema,
@@ -533,7 +534,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     invalidPricingConfigurationProviderCalls = 0;
     const property = await databaseRentalDataRepository().findPropertyById(invalidPricingConfigurationRequest.property_id);
     if (!property) throw new Error('Seeded invalid-configuration property is required.');
-    const invalidProperty = { ...property, min_price: Math.round((property.base_price * 1.3 + 0.01) * 100) / 100 } as Property;
+    const invalidProperty = { ...property, min_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO) + 0.01 } as Property;
     setPricingActivityDependencies({
       rentalDataRepository: { findPropertyById: async () => invalidProperty, listMarketSignals: async () => [] },
       provider: { getRecommendation: async () => { invalidPricingConfigurationProviderCalls += 1; throw new Error('must not call provider'); } },
@@ -612,7 +613,12 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
   it('accepts a deterministic recommendation capped at the 30% policy boundary through Temporal', async () => {
     const property = await databaseRentalDataRepository().findPropertyById(policyBoundaryRequest.property_id);
     if (!property) throw new Error('Seeded policy-boundary property is required.');
-    const policyProperty = { ...property, current_occupancy_rate: 0.6, target_occupancy_rate: 0.8 };
+    const policyProperty = {
+      ...property,
+      min_price: property.base_price * (1 + MAX_PRICE_INCREASE_RATIO),
+      current_occupancy_rate: 0.6,
+      target_occupancy_rate: 0.8,
+    };
     const highSignals: MarketSignal[] = [{ property_id: policyProperty.id, date: '2026-01-01', competitor_avg_price: policyProperty.base_price * 1.2, local_event_score: 1, seasonality_score: 1, demand_score: 1 }];
     const expectedDeterministic = calculateRuleBasedPricing(policyProperty, highSignals);
     let authoritativePrice: number | undefined;
@@ -624,7 +630,8 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(result).toEqual({ status: 'accepted', issue_codes: [] });
     expect.soft(status).toMatchObject({ status: 'accepted', issue_codes: [], recommendation: { deterministic: expectedDeterministic } });
     expect.soft(recommendation).toBeDefined();
-    expect.soft(expectedDeterministic.adjustments.total).toBe(0.3);
+    expect.soft(policyProperty.min_price).toBe(expectedDeterministic.recommended_price);
+    expect.soft(expectedDeterministic.adjustments.total).toBe(MAX_PRICE_INCREASE_RATIO);
     expect.soft(authoritativePrice).toBe(expectedDeterministic.recommended_price);
   }, 20_000);
 

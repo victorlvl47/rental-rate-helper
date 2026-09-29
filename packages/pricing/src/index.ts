@@ -1,8 +1,7 @@
 import { estimateOpenAiCostUsd, OPENAI_PRICING_TABLE_VERSION } from './model-pricing.js';
-import { aiPricingRecommendationSchema, recommendationValidationResultSchema, type AiPricingRecommendation, type MarketSignal, type Property, type RecommendationValidationIssueCode, type RecommendationValidationResult, type RuleBasedPricingResult } from 'shared';
+import { aiPricingRecommendationSchema, MAX_PRICE_INCREASE_RATIO, priceExceedsMaximumIncrease, recommendationValidationResultSchema, type AiPricingRecommendation, type MarketSignal, type Property, type RecommendationValidationIssueCode, type RecommendationValidationResult, type RuleBasedPricingResult } from 'shared';
 
 export const PRICING_PROMPT_VERSION = 'v1';
-const MAX_PRICE_INCREASE_PERCENT = 30;
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const cents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 const average = (signals: readonly MarketSignal[], select: (signal: MarketSignal) => number) => signals.reduce((sum, signal) => sum + select(signal), 0) / signals.length;
@@ -15,9 +14,7 @@ export class InvalidPricingConfigurationError extends Error {
 }
 
 function minimumExceedsMaximumIncrease(property: Property): boolean {
-  const minimumCents = Math.round(property.min_price * 100);
-  const baseCents = Math.round(property.base_price * 100);
-  return minimumCents * 100 > baseCents * (100 + MAX_PRICE_INCREASE_PERCENT);
+  return priceExceedsMaximumIncrease(property.min_price, property.base_price);
 }
 
 export function calculateRuleBasedPricing(property: Property, signals: readonly MarketSignal[]): RuleBasedPricingResult {
@@ -31,7 +28,7 @@ export function calculateRuleBasedPricing(property: Property, signals: readonly 
   const localEvent = used ? (average(signals, s => s.local_event_score) - .5) * .1 : 0;
   // The deterministic engine must never create a price that validation would
   // reject for exceeding the documented 30% increase limit.
-  const total = clamp(occupancy + demand + competitor + seasonality + localEvent, -.35, MAX_PRICE_INCREASE_PERCENT / 100);
+  const total = clamp(occupancy + demand + competitor + seasonality + localEvent, -.35, MAX_PRICE_INCREASE_RATIO);
   const raw = property.base_price * (1 + total);
   return { property_id: property.id, signal_count: signals.length, market_signals_used: used, base_price: property.base_price, minimum_recommended_price: cents(clamp(raw * .95, property.min_price, property.max_price)), recommended_price: cents(clamp(raw, property.min_price, property.max_price)), maximum_recommended_price: cents(clamp(raw * 1.05, property.min_price, property.max_price)), adjustments: { occupancy, demand, competitor, seasonality, local_event: localEvent, total } };
 }
@@ -59,11 +56,11 @@ function add(issues: RecommendationValidationIssueCode[], issue: RecommendationV
 export function validateAiPricingRecommendation(property: Property, deterministic: RuleBasedPricingResult, output: unknown): RecommendationValidationResult {
   const parsed = aiPricingRecommendationSchema.safeParse(output);
   if (!parsed.success) { if (typeof output !== 'object' || output === null || Array.isArray(output)) return { valid: false, issue_codes: ['malformed_recommendation'] }; const issues: RecommendationValidationIssueCode[] = []; for (const issue of parsed.error.issues) { const field = issue.path[0]; if (field === 'explanation' && typeof (output as { explanation?: unknown }).explanation === 'string' && !(output as { explanation: string }).explanation.trim()) add(issues, 'blank_explanation'); else if (field === 'confidence_score' && 'confidence_score' in output) add(issues, 'invalid_confidence_score'); else if (field === 'risk_level' && 'risk_level' in output) add(issues, 'unsupported_risk_level'); else add(issues, 'malformed_recommendation'); } return { valid: false, issue_codes: issues.length ? issues : ['malformed_recommendation'] }; }
-  const r = parsed.data, issues: RecommendationValidationIssueCode[] = [], rc = Math.round(r.recommended_price * 100), ac = Math.round(deterministic.recommended_price * 100), base = Math.round(property.base_price * 100);
+  const r = parsed.data, issues: RecommendationValidationIssueCode[] = [], rc = Math.round(r.recommended_price * 100), ac = Math.round(deterministic.recommended_price * 100);
   if (rc < Math.round(property.min_price*100) || rc > Math.round(property.max_price*100)) add(issues, 'price_outside_property_bounds');
   if (rc < Math.round(deterministic.minimum_recommended_price*100) || rc > Math.round(deterministic.maximum_recommended_price*100)) add(issues, 'price_outside_deterministic_range');
   if (rc !== ac) add(issues, 'price_mismatch_authoritative_result');
-  if (ac * 100 > base * 130) add(issues, 'authoritative_result_exceeds_30_percent'); else if (rc * 100 > base * 130) add(issues, 'price_increase_exceeds_30_percent');
+  if (priceExceedsMaximumIncrease(deterministic.recommended_price, property.base_price)) add(issues, 'authoritative_result_exceeds_30_percent'); else if (priceExceedsMaximumIncrease(r.recommended_price, property.base_price)) add(issues, 'price_increase_exceeds_30_percent');
   return issues.length ? { valid: false, issue_codes: issues } : recommendationValidationResultSchema.parse({ valid: true, recommendation: r });
 }
 
