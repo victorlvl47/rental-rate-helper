@@ -14,12 +14,13 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
-    "database": "workspace:*",
-    "pricing": "workspace:*",
+    "@sentry/node": "^11.1.0",
     "@temporalio/client": "^1.13.2",
     "@temporalio/common": "^1.13.2",
+    "database": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.2",
+    "pricing": "workspace:*",
     "shared": "workspace:*"
   },
   "devDependencies": {

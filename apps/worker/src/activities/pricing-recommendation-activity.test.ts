@@ -1,11 +1,12 @@
 import { ApplicationFailure } from '@temporalio/workflow';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createConfiguredAiPricingProvider } from 'pricing';
 import { callPricingAi, loadPricingData, setPricingActivityDependencies } from './pricing-recommendation-activity.js';
 import type { PricingWorkflowRequest, RuleBasedPricingResult } from 'shared';
 
 const request: PricingWorkflowRequest = { property_id: '10000000-0000-4000-8000-000000000001', pricing_date: '2026-09-14' };
 const deterministic: RuleBasedPricingResult = { property_id: request.property_id, signal_count: 0, market_signals_used: false, base_price: 100, minimum_recommended_price: 95, recommended_price: 100, maximum_recommended_price: 105, adjustments: { occupancy: 0, demand: 0, competitor: 0, seasonality: 0, local_event: 0, total: 0 } };
-const repository = { createOrResolve: async () => ({ id: 'id', workflow_id: 'workflow', status: 'pending' as const, existing: false }), updateStatus: async () => undefined, saveAccepted: async () => 'id', saveMetrics: async () => undefined, getStatus: async () => undefined, listAcceptedRecommendations: async () => [], getDashboardSummary: async () => ({ total_properties: 0, accepted_recommendations: 0, average_ai_latency_ms: null, estimated_ai_cost_usd: null, validation_failures: 0, recent_failed_workflows: [] }) };
+const repository = { createOrResolve: async () => ({ id: 'id', workflow_id: 'workflow', status: 'pending' as const, existing: false }), updateStatus: async () => undefined, saveAccepted: async () => 'id', saveMetrics: async () => undefined, getStatus: async () => undefined, listAcceptedRecommendations: async () => [], getDashboardSummary: async () => ({ total_workflow_requests: 0, accepted_recommendations: 0, failed_workflows: 0, validation_rejections: 0, validation_pass_rate: null, average_ai_latency_ms: null, estimated_ai_cost_usd: null, recent_failed_workflows: [] }) };
 
 describe('pricing activities', () => {
   it('uses stub output with truthful null usage metrics', async () => {
@@ -19,3 +20,11 @@ describe('pricing activities', () => {
     await expect(callPricingAi(request, deterministic)).rejects.toMatchObject({ type: 'PROVIDER_FAILURE', nonRetryable: false });
   });
 });
+
+  it('persists a known failed-provider cost for dashboard totals', async () => {
+    const saveMetrics = vi.fn(async () => undefined);
+    const provider = createConfiguredAiPricingProvider({ environment: { AI_PROVIDER: 'openai', OPENAI_API_KEY: 'test-key' }, fetch: async () => ({ ok: true, json: async () => ({ usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 }, output: [] }) }) });
+    setPricingActivityDependencies({ repository: { ...repository, saveMetrics }, provider });
+    await expect(callPricingAi(request, deterministic)).rejects.toMatchObject({ type: 'PROVIDER_FAILURE' });
+    expect(saveMetrics).toHaveBeenCalledWith(request, expect.objectContaining({ model: 'gpt-4o-mini', input_tokens: 1_000_000, output_tokens: 1_000_000, estimated_cost_usd: 0.75, success: false }));
+  });

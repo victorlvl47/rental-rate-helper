@@ -1,3 +1,4 @@
+import { estimateOpenAiCostUsd, OPENAI_PRICING_TABLE_VERSION } from './model-pricing.js';
 import { aiPricingRecommendationSchema, recommendationValidationResultSchema, type AiPricingRecommendation, type MarketSignal, type Property, type RecommendationValidationIssueCode, type RecommendationValidationResult, type RuleBasedPricingResult } from 'shared';
 
 export const PRICING_PROMPT_VERSION = 'v1';
@@ -30,19 +31,10 @@ export function createConfiguredAiPricingProvider(options: ConfiguredAiPricingPr
   if (environment.AI_PROVIDER !== 'openai') throw new Error('AI_PROVIDER must be either "stub" or "openai".');
   const apiKey = environment.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error('OPENAI_API_KEY must be configured when AI_PROVIDER is "openai".');
-  const model = environment.OPENAI_MODEL?.trim() || 'gpt-5.6';
+  const model = environment.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
   const fetch = options.fetch ?? ((globalThis as { fetch?: FetchLike }).fetch?.bind(globalThis));
   if (!fetch) throw new Error('Fetch is unavailable for the OpenAI provider.');
-  return {
-    async getRecommendation(result) {
-      const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, store: false, input: [{ role: 'user', content: [{ type: 'input_text', text: buildPricingPrompt(result) }] }], text: { format: { type: 'json_schema', name: 'ai_pricing_recommendation', strict: true, schema: { type: 'object', additionalProperties: false, required: ['recommended_price', 'explanation', 'confidence_score', 'risk_level'], properties: { recommended_price: { type: 'number', enum: [result.recommended_price] }, explanation: { type: 'string', minLength: 1 }, confidence_score: { type: 'number', minimum: 0, maximum: 1 }, risk_level: { type: 'string', enum: ['low', 'medium', 'high'] } } } } } }) });
-      if (!response.ok) throw new Error('OpenAI pricing provider request failed.');
-      const payload = await response.json() as { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> };
-      const text = payload.output?.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).find((content) => content.type === 'output_text')?.text;
-      if (!text) throw new Error('OpenAI pricing provider returned invalid structured output.');
-      return aiPricingRecommendationSchema.parse(JSON.parse(text));
-    },
-  };
+  return createOpenAiProvider({ apiKey, model, fetch });
 }
 export function buildPricingPrompt(result: RuleBasedPricingResult): string { return `You provide explanation metadata for authoritative deterministic rental pricing. Return recommended_price exactly unchanged: ${result.recommended_price}. Range: ${result.minimum_recommended_price}-${result.maximum_recommended_price}.`; }
 function add(issues: RecommendationValidationIssueCode[], issue: RecommendationValidationIssueCode) { if (!issues.includes(issue)) issues.push(issue); }
@@ -56,3 +48,10 @@ export function validateAiPricingRecommendation(property: Property, deterministi
   if (ac * 100 > base * 130) add(issues, 'authoritative_result_exceeds_30_percent'); else if (rc * 100 > base * 130) add(issues, 'price_increase_exceeds_30_percent');
   return issues.length ? { valid: false, issue_codes: issues } : recommendationValidationResultSchema.parse({ valid: true, recommendation: r });
 }
+
+interface OpenAiProviderOptions { apiKey: string; model: string; fetch: FetchLike; }
+type OpenAiPayload = { status?: unknown; output?: Array<{ type?: unknown; content?: Array<{ type?: unknown; text?: unknown }> }>; usage?: { input_tokens?: unknown; output_tokens?: unknown } };
+class OpenAiProviderFailure extends Error { constructor(readonly metrics: import('shared').AiCallMetrics) { super('OpenAI pricing provider failed.'); } }
+function usageMetrics(payload: OpenAiPayload | undefined, model: string, latency_ms: number, success: boolean): import('shared').AiCallMetrics { const input = typeof payload?.usage?.input_tokens === 'number' && Number.isInteger(payload.usage.input_tokens) && payload.usage.input_tokens >= 0 ? payload.usage.input_tokens : null; const output = typeof payload?.usage?.output_tokens === 'number' && Number.isInteger(payload.usage.output_tokens) && payload.usage.output_tokens >= 0 ? payload.usage.output_tokens : null; return { model, prompt_version: PRICING_PROMPT_VERSION, input_tokens: input, output_tokens: output, estimated_cost_usd: estimateOpenAiCostUsd(model, input, output), latency_ms, success }; }
+function createOpenAiProvider(options: OpenAiProviderOptions): AiPricingProvider { return { async getRecommendation(result) { return (await this.getRecommendationWithMetrics!(result)).recommendation; }, async getRecommendationWithMetrics(result) { const started = Date.now(); let payload: OpenAiPayload | undefined; try { const response = await options.fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: options.model, store: false, input: [{ role: 'user', content: [{ type: 'input_text', text: buildPricingPrompt(result) }] }], text: { format: { type: 'json_schema', name: 'ai_pricing_recommendation', strict: true, schema: { type: 'object', additionalProperties: false, required: ['recommended_price', 'explanation', 'confidence_score', 'risk_level'], properties: { recommended_price: { type: 'number', enum: [result.recommended_price] }, explanation: { type: 'string', minLength: 1 }, confidence_score: { type: 'number', minimum: 0, maximum: 1 }, risk_level: { type: 'string', enum: ['low', 'medium', 'high'] } } } } } }) }); if (!response.ok) throw new Error('HTTP_ERROR'); payload = await response.json() as OpenAiPayload; const text = payload.output?.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).find((content) => content.type === 'output_text')?.text; if (typeof text !== 'string') throw new Error('INVALID_OUTPUT'); const recommendation = aiPricingRecommendationSchema.parse(JSON.parse(text)); if (recommendation.recommended_price !== result.recommended_price) throw new Error('INVALID_OUTPUT'); return { recommendation, metrics: usageMetrics(payload, options.model, Date.now() - started, true) }; } catch { throw new OpenAiProviderFailure(usageMetrics(payload, options.model, Date.now() - started, false)); } } }; }
+export function getProviderFailureMetrics(error: unknown): import('shared').AiCallMetrics | undefined { return error instanceof OpenAiProviderFailure ? error.metrics : undefined; }

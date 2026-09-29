@@ -1,4 +1,5 @@
 import app from './app.js';
+import { initializeSentry, captureUnexpected } from './observability/sentry.js';
 
 const DEFAULT_PORT = 8080;
 
@@ -21,12 +22,14 @@ function getPort(value: string | undefined): number {
 }
 
 async function start(): Promise<void> {
+  initializeSentry('api');
   try {
     const port = getPort(process.env.API_PORT);
     const address = await app.listen({ host: '0.0.0.0', port });
     app.log.info(`API listening at ${address}`);
   } catch (error) {
-    app.log.error(error, 'Failed to start API server');
+    captureUnexpected(error, { service: 'api', component: 'server', event: 'api_start_failed' });
+    app.log.error({ event: 'api_start_failed', service: 'api', component: 'server' }, 'Failed to start API server');
     process.exit(1);
   }
 }
@@ -46,7 +49,8 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
     app.log.info('API server closed');
     process.exit(0);
   } catch (error) {
-    app.log.error(error, 'Failed to shut down API server cleanly');
+    captureUnexpected(error, { service: 'api', component: 'server', event: 'api_shutdown_failed' });
+    app.log.error({ event: 'api_shutdown_failed', service: 'api', component: 'server' }, 'Failed to shut down API server cleanly');
     process.exit(1);
   }
 }
