@@ -98,7 +98,7 @@ const nearThirtyPercent = property('10000000-0000-4000-8000-000000000007', {
   current_occupancy_rate: 0,
   target_occupancy_rate: 0.5,
 });
-const aboveThirtyPercent = property('10000000-0000-4000-8000-000000000008', {
+const thirtyPercentBoundary = property('10000000-0000-4000-8000-000000000008', {
   max_price: 200,
   current_occupancy_rate: 0,
   target_occupancy_rate: 0.5,
@@ -182,11 +182,11 @@ export const recommendationValidationEvalCases: readonly RecommendationValidatio
     expected: { kind: 'rejected', issue_codes: ['price_mismatch_authoritative_result', 'price_increase_exceeds_30_percent'] },
   },
   {
-    id: 'authoritative-result-above-thirty-percent',
-    property: aboveThirtyPercent,
-    signals: [signal(aboveThirtyPercent.id, { competitor_avg_price: 200, demand_score: 1, seasonality_score: 1, local_event_score: 1 })],
-    recommendation: { ...validRecommendation, recommended_price: 135 },
-    expected: { kind: 'rejected', issue_codes: ['authoritative_result_exceeds_30_percent'] },
+    id: 'authoritative-result-at-thirty-percent-cap',
+    property: thirtyPercentBoundary,
+    signals: [signal(thirtyPercentBoundary.id, { competitor_avg_price: 200, demand_score: 1, seasonality_score: 1, local_event_score: 1 })],
+    recommendation: { ...validRecommendation, recommended_price: 130 },
+    expected: { kind: 'accepted', direction: 'increase' },
   },
   {
     id: 'confidence-outside-range',

@@ -67,7 +67,7 @@ describe('rule-based pricing result contract', () => {
       { ...result.adjustments, competitor: 0.11 },
       { ...result.adjustments, seasonality: -0.06 },
       { ...result.adjustments, local_event: 0.06 },
-      { ...result.adjustments, total: 0.36 },
+      { ...result.adjustments, total: 0.31 },
       { ...result.adjustments, total: -0.36 },
     ]) {
       expect(ruleBasedPricingResultSchema.safeParse({ ...result, adjustments }).success).toBe(false);

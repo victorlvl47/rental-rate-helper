@@ -1,405 +1,107 @@
 # RentalRateHelper
 
-RentalRateHelper is a local web application for exploring deterministic rental
-market data and pricing previews by city. It includes a read-only AI pricing
-preview that adds structured explanation, confidence, and risk metadata without
-changing the authoritative deterministic price or range.
+RentalRateHelper is a working local demo of a reliable dynamic-pricing workflow for short-term rentals. It uses fake rental-market data to generate durable nightly-price recommendations, then presents the result in a small operations dashboard.
+
+The short-term-rental vertical is deliberately narrow. The architecture establishes the foundations needed before connecting real customer data: deterministic pricing rules, validated AI context, Temporal workflows, idempotency, evaluation, cost and latency tracking, and safe observability.
+
+> The deterministic engine owns every pricing decision. AI may add human-readable explanation, confidence, and risk metadata only after that metadata passes validation.
+
+## What the product demonstrates
+
+- A deterministic price and safe range based on property and market signals.
+- A durable Temporal workflow with retry behavior and a property/date idempotency key.
+- Structured AI metadata that cannot change the authoritative price.
+- Validation of output shape, explanation, confidence, risk level, property bounds, deterministic range, and the 30% maximum price-increase policy.
+- PostgreSQL persistence for workflow state, recommendations, and AI-call metrics.
+- Dashboard visibility into activity, accepted recommendations, failures, validation rejections, latency, and estimated AI cost.
+- Safe structured logs and optional Sentry reporting that exclude prompts, raw provider responses, credentials, and database URLs.
 
 ## Architecture
 
-```text
-Next.js dashboard → Fastify API → Drizzle → PostgreSQL
-                         ↓
-                  Temporal client
-                         ↓
-                   Temporal server
-                         ↓
-                   Temporal worker
+```mermaid
+flowchart LR
+  Operator[Revenue operator] --> Web[Next.js dashboard]
+  Web --> API[Fastify API]
+  API --> DB[(PostgreSQL)]
+  API --> Client[Temporal client]
+  Client --> Temporal[Temporal server]
+  Temporal --> Worker[Temporal worker]
+  Worker --> Rules[Deterministic pricing engine]
+  Worker --> AI[AI provider or local stub]
+  Rules --> Validate[Validation]
+  AI --> Validate
+  Validate --> DB
+  Worker --> Metrics[Cost, latency, safe logs, optional Sentry]
 ```
 
-The Temporal worker currently hosts only a deterministic smoke-test workflow.
-It invokes one activity and returns a fixed confirmation message.
+See [Architecture](docs/ARCHITECTURE.md) for the component and data-flow details.
 
-## Prerequisites
+## Product demo
+
+### Prerequisites
 
 - Node.js 20 or later
-- pnpm 10.15.0 (`corepack enable` can install the version declared in
-  `package.json`)
-- Docker and Docker Compose, with permission to run `docker compose`
+- pnpm 10.15.0 (`corepack enable` can install the declared version)
+- Docker and Docker Compose
 
-## Local setup
-
-From the repository root, install dependencies and create a local environment
-file:
+### Start locally
 
 ```bash
 pnpm install
 cp .env.example .env
-```
-
-`.env` is ignored by Git. The tracked `.env.example` contains development-only
-values:
-
-```dotenv
-DATABASE_URL=postgresql://rental_rate_helper:rental_rate_helper_local@localhost:5433/rental_rate_helper
-API_PORT=8080
-NEXT_PUBLIC_API_URL=http://localhost:8080
-TEMPORAL_ADDRESS=localhost:7233
-TEMPORAL_TASK_QUEUE=rental-rate-helper
-# The local deterministic AI-pricing stub is the default and needs no key.
-AI_PROVIDER=stub
-# Required only when AI_PROVIDER=openai. Never commit a real key.
-OPENAI_API_KEY=
-# Optional; defaults to gpt-4o-mini, which is in the checked-in local pricing table.
-OPENAI_MODEL=
-```
-
-The API imports the database package, which loads the repository-root `.env`.
-`pnpm --filter api dev` therefore uses that file; `apps/api/.env` is not loaded
-by the API startup command. The committed example keeps the stub enabled. To
-run a smoke test independently of any local OpenAI setting, set
-`AI_PROVIDER=stub` on the API command below.
-
-Start the infrastructure without removing persistent data:
-
-```bash
 pnpm infra:up
-docker compose ps
-```
-
-If Docker requires elevated permissions, use `sudo docker compose up -d` and
-`sudo docker compose ps` instead. Never use `docker compose down -v` for normal
-development because it deletes the PostgreSQL volume.
-
-Start the dashboard, API, and Temporal worker together:
-
-```bash
+pnpm --filter database db:migrate
+pnpm --filter database db:seed
 pnpm dev
 ```
 
-`pnpm dev` first builds the database package so the API can resolve it from a
-fresh clone, then starts all three applications in parallel.
+The default `AI_PROVIDER=stub` is deterministic, needs no API key, and makes no network AI request. It is the recommended demo mode.
 
-## Local service addresses
+Open:
 
-```text
-Dashboard:       http://localhost:3000
-API:             http://localhost:8080
-API health:      http://localhost:8080/health
-PostgreSQL:      localhost:5433
-Temporal:        localhost:7233
-Temporal Web UI: http://localhost:8233
-```
+- Dashboard: <http://localhost:3000>
+- API health: <http://localhost:8080/health>
+- Temporal UI: <http://localhost:8233>
 
-## Dashboard (Epic 7)
+### A five-minute operator walkthrough
 
-With PostgreSQL migrated and seeded, run the API, Temporal worker, and web app
-together with `pnpm dev` (or run their existing individual `dev` commands in
-separate terminals). Open `http://localhost:3000`; it redirects to
-`/dashboard`.
+1. Open **Dashboard** to see system activity and safe operational metrics.
+2. Open **Properties**, select a seeded property and a new pricing date, then choose **Generate recommendation**.
+3. Watch the status become accepted and open **Recommendations** to see the deterministic price, safe range, validated explanation, confidence, risk, and AI metrics.
+4. Search the workflow ID in **Temporal UI** to see the durable workflow execution.
+5. Open **Evals** and run `pnpm --filter api eval:pricing` in a terminal to show deliberate expected-versus-actual pricing checks.
 
-The dashboard routes are:
+Repeating the same property/date reuses the same logical workflow or completed result. This is intentional idempotency, not a duplicate recommendation.
 
-- `/dashboard` — safe operational counts, AI metrics when available, and recent failed workflows.
-- `/properties` — choose one of the four seeded markets and a calendar date, then start a durable pricing workflow.
-- `/recommendations` — accepted, persisted deterministic prices with validated AI metadata.
-- `/evals` — instructions for the existing offline validation suite.
+## Screenshots
 
-For a short demo, seed the database, open `/properties`, select a
-market and today (or a fresh date), then choose **Generate recommendation**.
-The page immediately shows pending/running status and polls the safe status
-endpoint until accepted, rejected, or failed. Repeating the same property/date
-is normal: the existing workflow or result is reused and the dashboard says so.
-Open `/recommendations` to review accepted results. The displayed nightly price
-and range are always deterministic; AI provides only explanation, confidence,
-and risk metadata.
+These are placeholders for the final local-product screenshots. Replace the files in `docs/images/` after capturing the demo; no generated or stock screenshots are used.
 
-Dashboard reads use `GET /dashboard/summary` and `GET /recommendations`. Both
-are read-only, return intentional safe fields only, and never expose provider,
-Temporal, or database details.
+| Operator story | Placeholder |
+| --- | --- |
+| System health and recent activity | ![Dashboard screenshot placeholder](docs/images/dashboard-placeholder.svg) |
+| Select a property and pricing date | ![Properties screenshot placeholder](docs/images/properties-placeholder.svg) |
+| Review an accepted recommendation | ![Recommendation screenshot placeholder](docs/images/recommendation-placeholder.svg) |
+| Verify durable workflow execution | ![Temporal screenshot placeholder](docs/images/temporal-placeholder.svg) |
+| Review deliberate evaluation results | ![Evals screenshot placeholder](docs/images/evals-placeholder.svg) |
 
-Confirm the API and PostgreSQL connection:
+## Verification
+
+Run the release checks from the repository root:
 
 ```bash
-curl -i http://localhost:8080/health
-```
-
-Expected response:
-
-```json
-{
-  "status": "ok",
-  "service": "rental-rate-helper-api",
-  "database": "connected"
-}
-```
-
-If PostgreSQL is unavailable, this endpoint returns HTTP `503` and a safe
-response with `"database": "disconnected"`; it does not return credentials.
-After PostgreSQL recovers, the next health request should return HTTP `200`.
-
-## Temporal smoke test
-
-With infrastructure and `pnpm dev` running, start and wait for the smoke
-workflow:
-
-```bash
-pnpm temporal:smoke
-```
-
-The command prints a unique `rental-rate-helper-smoke-...` workflow ID and this
-result:
-
-```text
-RentalRateHelper Temporal smoke test completed
-```
-
-Open Temporal Web UI at http://localhost:8233 and search for that workflow ID.
-The worker logs its Temporal address and task queue when it begins polling.
-
-If Temporal is unavailable, the worker and smoke client print a concise
-connection error naming the configured Temporal address. Start or restart the
-infrastructure with `pnpm infra:up`, wait for `docker compose ps` to show
-healthy/completed setup services, then rerun the worker or smoke command.
-
-## Build, checks, migrations, and sample data
-
-```bash
-pnpm build
-pnpm typecheck
-```
-
-When a database schema change requires a migration, generate and apply it with:
-
-```bash
-pnpm --filter database db:generate
-pnpm --filter database db:migrate
-```
-
-With PostgreSQL running and migrations applied, load the deterministic local MVP sample data with:
-
-```bash
-pnpm --filter database db:seed
-```
-
-The seed inserts clearly fake data for local development only: it includes all four MVP markets, uses USD prices, and is safe to rerun. Repeated runs update the known sample properties and market signals instead of creating duplicates.
-
-## Epic 2 market-data flow
-
-Epic 2 adds read-only, fake rental market data for local MVP development. It
-does not generate pricing recommendations.
-
-### Prerequisites and local configuration
-
-Install Node.js 20 or later, pnpm 10.15.0, Docker, and Docker Compose. Docker
-must be running and your user must have permission to use `docker compose`.
-PostgreSQL must be available before migrations, seeding, `/health`, or the
-market-data API routes can work.
-
-Create the local environment file from the tracked template; do not commit it:
-
-```bash
-cp .env.example .env
-```
-
-For the default local setup, `.env.example` configures PostgreSQL on port 5433
-and the API on port 8080. Keep credentials local; use different values in your
-own `.env` when needed.
-
-### Start, migrate, seed, and run the API
-
-From the repository root, run the commands in this order:
-
-```bash
-pnpm infra:up
-pnpm --filter database db:migrate
-pnpm --filter database db:seed
-AI_PROVIDER=stub pnpm --filter api dev
-```
-
-`pnpm infra:up` starts the local Docker services, including PostgreSQL. Run
-migrations before seeding. The seed contains eight fixed fake properties and
-sixteen fake market signals: at least two properties for each supported market.
-It is safe to rerun `pnpm --filter database db:seed`; known fixed records are
-updated rather than duplicated.
-
-The API listens at `http://localhost:8080` by default (the `API_PORT` value in
-the repository-root `.env`). Start it in a separate terminal after the database
-has been migrated and seeded. The command above explicitly selects the
-credential-free stub, even if `.env` has an OpenAI configuration.
-
-### Data rules
-
-The only supported markets are:
-
-- New York
-- Las Vegas
-- Guatemala City
-- Toronto
-
-All prices are USD-only JSON numbers. Dates are calendar dates in `YYYY-MM-DD`
-format. PostgreSQL numeric values are converted and validated by the API, so
-clients receive JSON numbers rather than numeric strings.
-
-### Read-only API examples
-
-With the API running at `http://localhost:8080`, use these requests:
-
-```bash
-curl -i http://localhost:8080/health
-curl -i http://localhost:8080/markets
-curl -i 'http://localhost:8080/properties?city=New%20York'
-curl -i 'http://localhost:8080/properties?city=Las%20Vegas'
-curl -i 'http://localhost:8080/properties?city=Guatemala%20City'
-curl -i 'http://localhost:8080/properties?city=Toronto'
-curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/market-signals
-curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-preview
-curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/ai-pricing-preview
-```
-
-`10000000-0000-4000-8000-000000000001` is the fixed ID for the seeded Sample
-Harbor Studio property. Its market signals are returned in ascending date order.
-
-### Epic 4 AI pricing verification
-
-Use this reproducible local smoke path. It requires no OpenAI key and makes no
-network request: the explicit `AI_PROVIDER=stub` process returns deterministic
-structured metadata.
-
-```bash
-pnpm infra:up
-pnpm --filter database db:migrate
-pnpm --filter database db:seed
-AI_PROVIDER=stub pnpm --filter api dev
-```
-
-Leave the API running in that terminal. In another terminal, call the seeded
-property twice and compare the complete JSON responses:
-
-```bash
-curl --fail --silent --show-error \
-  http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/ai-pricing-preview \
-  -o /tmp/rental-rate-helper-ai-preview-1.json
-curl --fail --silent --show-error \
-  http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/ai-pricing-preview \
-  -o /tmp/rental-rate-helper-ai-preview-2.json
-cmp /tmp/rental-rate-helper-ai-preview-1.json /tmp/rental-rate-helper-ai-preview-2.json
-```
-
-`cmp` exits successfully when the responses are identical. The JSON contains
-`rule_based_pricing` (including numeric USD prices, safe range, adjustment
-breakdown, signal count, and whether signals were used) and
-`ai_recommendation` (the same recommended price plus a non-empty explanation,
-confidence from 0 to 1, and an allowed risk level). For the seeded property,
-expect price `216.55`, range `205.72`–`227.38`, confidence `0.8`, and risk
-`low`. The deterministic result is authoritative: the AI provider cannot alter
-its recommended price or range. The endpoint is read-only and does not save
-recommendations.
-
-Check the validation cases as well:
-
-```bash
-curl -i http://localhost:8080/properties/not-a-uuid/ai-pricing-preview
-curl -i http://localhost:8080/properties/10000000-0000-4000-8000-000000000099/ai-pricing-preview
-```
-
-The first returns `400` with `{"error":"Invalid property ID."}`; the second
-returns `404` with `{"error":"Property not found."}`.
-
-### Offline pricing validation eval
-
-Run the checked-in pricing validation/eval suite from the repository root:
-
-```bash
+pnpm --filter shared test
+pnpm --filter pricing test
+pnpm --filter api test
+pnpm --filter worker test
 pnpm --filter api eval:pricing
+pnpm --filter worker test:temporal-retry
+pnpm typecheck
+pnpm build
+git diff --check
 ```
 
-This no-credential command uses static in-memory fixtures only. It requires no
-API key, OpenAI request, network access, database, Temporal worker, or other
-infrastructure service. It prints one deterministic `PASS` or `FAIL` line per
-case with the expected and actual classification, followed by a final summary.
-
-The deterministic rule-based result is the authoritative source of the price
-and safe range. An AI preview returns AI metadata only when it passes
-validation; invalid metadata is safely rejected with a `422` response and its
-safe issue codes. The preview is read-only, so a rejected response does not
-save a recommendation.
-
-## Temporal pricing workflow
-
-The durable recommendation path is separate from both preview endpoints. A
-request is idempotent by `property_id + pricing_date`; the API and worker use
-the same deterministic workflow ID (`pricing-<property-id>-<YYYY-MM-DD>`).
-The deterministic engine owns the price and range. AI supplies only validated
-explanation, confidence, and risk metadata.
-
-Run the local stub path in this order:
-
-```bash
-pnpm infra:up
-pnpm --filter database db:migrate
-pnpm --filter database db:seed
-AI_PROVIDER=stub pnpm --filter api dev
-pnpm --filter worker dev
-```
-
-Start a request (the response is immediate; it does not wait for AI):
-
-```bash
-curl -i -X POST http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-recommendations \
-  -H 'content-type: application/json' \
-  -d '{"pricing_date":"2026-09-14"}'
-curl -i 'http://localhost:8080/properties/10000000-0000-4000-8000-000000000001/pricing-recommendations/status?pricing_date=2026-09-14'
-```
-
-Repeat the POST with the same date to resolve the same logical workflow and
-durable request. Status responses expose only lifecycle state, safe validation
-issue codes, accepted metadata, and known metrics; raw prompts/provider bodies
-and credentials are never stored or returned. The stub has no token or cost
-usage, so those fields remain `null` rather than being invented.
-
-For a reproducible end-to-end smoke run, choose a fresh date (shown here as
-`2098-07-15`), wait until the status is `accepted`, then repeat the POST. Keep
-the API and worker commands above running in separate terminals:
-
-```bash
-property_id=10000000-0000-4000-8000-000000000001
-pricing_date=2098-07-15
-curl -i -X POST "http://localhost:8080/properties/$property_id/pricing-recommendations" \
-  -H 'content-type: application/json' -d "{\"pricing_date\":\"$pricing_date\"}"
-until curl --fail --silent "http://localhost:8080/properties/$property_id/pricing-recommendations/status?pricing_date=$pricing_date" | grep -q '"status":"accepted"'; do sleep 1; done
-curl -i -X POST "http://localhost:8080/properties/$property_id/pricing-recommendations" \
-  -H 'content-type: application/json' -d "{\"pricing_date\":\"$pricing_date\"}"
-
-missing_property_id=20000000-0000-4000-8000-000000000099
-curl -i -X POST "http://localhost:8080/properties/$missing_property_id/pricing-recommendations" \
-  -H 'content-type: application/json' -d '{"pricing_date":"2098-07-16"}'
-until curl --fail --silent "http://localhost:8080/properties/$missing_property_id/pricing-recommendations/status?pricing_date=2098-07-16" | grep -q '"status":"failed"'; do sleep 1; done
-curl -i "http://localhost:8080/properties/$missing_property_id/pricing-recommendations/status?pricing_date=2098-07-16"
-```
-
-The first start returns `202`; a completed duplicate returns `200` with
-`"already_started":true`. The missing-property start is also `202`, and its
-eventual status is safely `failed` with no provider or database detail.
-
-`pnpm --filter api eval:pricing` remains the credential-free, deterministic
-offline validation suite. It does not need PostgreSQL, Temporal, or OpenAI.
-The workflow path above is local/manual verification with the stub provider.
-An OpenAI smoke check is optional and manual: configure `AI_PROVIDER=openai`
-and `OPENAI_API_KEY` locally, then run the same start/status sequence; never
-use it as automated coverage.
-
-### Local Temporal pricing integration tests
-
-This focused suite starts a real worker on the normal pricing task queue and
-real workflows. It includes a concurrent-idempotency check that dispatches two
-identical API start requests with `Promise.all`, holds the accepted workflow
-active at its stub provider boundary, and verifies one `202` start, one safe
-`200` already-started response, one durable request, one deterministic Temporal
-workflow ID, and one accepted recommendation. It also covers retry recovery,
-retry exhaustion, missing properties, and invalid metadata. It requires the
-local Docker services and seeded data, but never uses OpenAI or network AI
-access:
+The Temporal integration suite requires the Docker services, database migrations, and seed data:
 
 ```bash
 pnpm infra:up
@@ -408,114 +110,40 @@ pnpm --filter database db:seed
 pnpm --filter worker test:temporal-retry
 ```
 
-The test uses a unique test date and removes its scoped workflow request,
-recommendation, and metrics rows during teardown.
+## Documentation
 
-The current pricing policies intentionally expose an unresolved conflict: the
-deterministic engine permits a total adjustment up to ±35%, while validation
-rejects a single price increase above 30%. An authoritative result above 30%
-is therefore rejected rather than silently clamped or mutated. Reconciling
-these limits requires a future pricing-policy decision.
+- [Architecture](docs/ARCHITECTURE.md) — system design, workflow, data boundaries, and extension path.
+- [Evaluation methodology](docs/EVALS.md) — deterministic ground truth and safe handling of failures.
+- [Security boundaries](docs/SECURITY.md) — secrets, logging, AI-output validation, and fake-data scope.
+- [Incident runbook](docs/INCIDENT_RUNBOOK.md) — response procedures for dependency and quality failures.
+- [Cost model](docs/COST_ANALYSIS.md) — token estimates, model tradeoffs, and cost controls.
 
-Run the automated verification suite from the repository root:
+## Local configuration
 
-```bash
-pnpm --filter shared test
-pnpm --filter api test
-pnpm --filter api eval:pricing
-pnpm build
-pnpm typecheck
-git diff --check
+The tracked [.env.example](.env.example) uses safe local defaults. Keep real keys only in the ignored root `.env`.
+
+```dotenv
+AI_PROVIDER=stub
+OPENAI_API_KEY=
+OPENAI_MODEL=
+SENTRY_DSN=
 ```
 
-OpenAI is optional and intentionally manual. To use it, set
-`AI_PROVIDER=openai` and a real `OPENAI_API_KEY` only in the ignored
-repository-root `.env`; `OPENAI_MODEL` is optional. Do not add a key to a
-tracked file. This is not required for the stub smoke path or automated tests.
+Set `AI_PROVIDER=openai` and `OPENAI_API_KEY` only for a manual OpenAI smoke check. Set `SENTRY_DSN` only when you want optional error telemetry. Neither is required for the local demo or automated checks.
 
-| Scenario | Expected response |
-| --- | --- |
-| Missing `city` | `400` |
-| Unsupported `city` | `400` |
-| Invalid property UUID | `400` |
-| Unknown valid property UUID | `404` |
-| Valid city with no properties | `200` with `[]` |
-| Existing property with no signals | `200` with `[]` |
-| Database unavailable | `503` |
+## Current MVP boundaries
 
-### Safe empty-database migration verification
+The current product intentionally uses fake, USD-only rental data and excludes authentication, billing, live Airbnb or market-data integrations, web scraping, multi-tenancy, and deployment automation. Those are product decisions, not missing prerequisites for the local workflow.
 
-Never reset, truncate, or drop the normal `rental_rate_helper` development
-database to test migrations. With PostgreSQL running, use this explicitly named
-temporary database instead:
+The existing architecture can later support additional pricing verticals—such as hotels, ecommerce, food delivery, or import/export—by introducing a vertical-specific input adapter and deterministic pricing policy while retaining the workflow, validation, metrics, and observability boundaries.
 
-These commands use the default `.env.example` credentials and port; if you
-changed your local PostgreSQL settings, replace them with your own `.env`
-values.
+## Useful commands
 
 ```bash
-docker compose exec -T postgresql createdb -U rental_rate_helper rental_rate_helper_issue12_verify
-DATABASE_URL=postgresql://rental_rate_helper:rental_rate_helper_local@localhost:5433/rental_rate_helper_issue12_verify pnpm --filter database db:migrate
-docker compose exec -T postgresql psql -U rental_rate_helper -d rental_rate_helper_issue12_verify -c '\dt'
+pnpm infra:up                 # start PostgreSQL and Temporal containers
+pnpm dev                      # start web, API, and worker
+pnpm temporal:smoke           # run the small Temporal connectivity smoke test
+pnpm infra:down               # stop containers while preserving data volumes
 ```
 
-After confirming the migration tables and expected application tables exist,
-remove only that named verification database. First print the exact target, then
-run the drop command:
-
-```bash
-printf '%s\n' 'Removing only temporary database: rental_rate_helper_issue12_verify'
-docker compose exec -T postgresql dropdb -U rental_rate_helper rental_rate_helper_issue12_verify
-```
-
-This empty database can also safely verify that a valid market returns `[]`.
-Point a separate API process at it with an explicit `DATABASE_URL` and a
-different `API_PORT`; do not repoint or alter the normal seeded database.
-
-### Epic 2 smoke-test checklist
-
-- [ ] PostgreSQL is running (`pnpm infra:up` and `docker compose ps`).
-- [ ] Migrations succeed on the explicitly named empty verification database.
-- [ ] The normal database migrates, then `db:seed` succeeds twice with no duplicate fixed IDs or `(property_id, date)` pairs.
-- [ ] `/health` reports a connected database and `/markets` returns all four markets.
-- [ ] Each supported city returns its seeded properties.
-- [ ] A seeded property returns date-ascending signals with JSON numeric prices and `YYYY-MM-DD` dates.
-- [ ] Missing/unsupported cities, invalid UUIDs, and unknown UUIDs return the documented statuses.
-- [ ] Valid empty results and database-failure behavior are covered by API tests; manually verify them with the temporary database only when safe.
-- [ ] `pnpm build`, `pnpm typecheck`, `pnpm --filter shared test`, `pnpm --filter api test`, and `git diff --check` pass.
-
-## Stopping local services
-
-Use `Ctrl+C` to stop `pnpm dev`; the API closes its PostgreSQL pool and the
-Temporal worker performs a graceful shutdown. Stop containers while preserving
-the PostgreSQL volume with:
-
-```bash
-pnpm infra:down
-```
-
-## Epic 1 smoke-test checklist
-
-- [ ] Run `pnpm install`.
-- [ ] Run `cp .env.example .env`.
-- [ ] Run `pnpm infra:up` and confirm with `docker compose ps`.
-- [ ] Run `pnpm dev`.
-- [ ] Open http://localhost:3000.
-- [ ] Call http://localhost:8080/health and confirm `database: connected`.
-- [ ] Run `pnpm temporal:smoke`.
-- [ ] Confirm its successful result and find the workflow ID in Temporal Web UI.
-- [ ] Run `pnpm build` and `pnpm typecheck`.
-- [ ] Stop applications with `Ctrl+C` and run `pnpm infra:down`.
-
-## Observability (Epic 8)
-
-The existing `/dashboard` displays total workflow requests, accepted recommendations, failed workflows, validation rejections and pass rate, average successful AI-call latency, total estimated AI cost, and recent failed workflows with only a safe category and timestamp.
-
-- Total estimated AI cost sums every stored provider attempt with known cost, including failed and retried attempts.
-- Average AI-call latency uses only successful provider attempts.
-- Validation rejection is an expected safety result and is kept separate from failed workflows.
-- The local stub has no token usage or cost; these values remain `null`.
-
-OpenAI token cost uses the checked-in `packages/pricing/src/model-pricing.ts` table (`openai-pricing-2026-09-28`, source: OpenAI API pricing page). Unknown models or missing provider usage return `null` rather than an invented estimate. Update that one versioned table when provider pricing changes.
-
-Sentry is optional. Set `SENTRY_DSN` (plus optional `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE`) in the ignored local `.env` to enable API and worker error reporting. Leaving the DSN blank keeps local development operational and sends no Sentry events. Only safe service, component, event, workflow/property/date, and failure-category context may be attached; prompts, raw provider responses, credentials, database URLs, and raw errors are not added as context.
+Do not use `docker compose down -v` for normal development: it removes the PostgreSQL volume.

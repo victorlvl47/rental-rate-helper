@@ -70,7 +70,7 @@ const activeDuplicateRequest: PricingWorkflowRequest = {
   pricing_date: `${String(5000 + (Date.now() % 2000)).padStart(4, '0')}-07-15`,
 };
 
-const policyConflictRequest: PricingWorkflowRequest = {
+const policyBoundaryRequest: PricingWorkflowRequest = {
   property_id: '10000000-0000-4000-8000-000000000001',
   pricing_date: `${String(3000 + (Date.now() % 2000)).padStart(4, '0')}-06-14`,
 };
@@ -240,7 +240,7 @@ afterAll(async () => {
     try {
       if (!databaseReady) return;
 
-      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest, concurrentStartRequest, activeDuplicateRequest, policyConflictRequest]) {
+      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest, concurrentStartRequest, activeDuplicateRequest, policyBoundaryRequest]) {
         const requestFilter = and(
           eq(pricingWorkflowRequests.property_id, scopedRequest.property_id),
           eq(pricingWorkflowRequests.pricing_date, scopedRequest.pricing_date),
@@ -566,23 +566,22 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(JSON.stringify({ workflowResult, status })).not.toMatch(/test-only invalid|credentials|internal exception/i);
   }, 20_000);
 
-  it('rejects an authoritative deterministic increase above 30% through Temporal without mutating it', async () => {
-    const property = await databaseRentalDataRepository().findPropertyById(policyConflictRequest.property_id);
-    if (!property) throw new Error('Seeded policy-conflict property is required.');
+  it('accepts a deterministic recommendation capped at the 30% policy boundary through Temporal', async () => {
+    const property = await databaseRentalDataRepository().findPropertyById(policyBoundaryRequest.property_id);
+    if (!property) throw new Error('Seeded policy-boundary property is required.');
     const policyProperty = { ...property, current_occupancy_rate: 0.6, target_occupancy_rate: 0.8 };
     const highSignals: MarketSignal[] = [{ property_id: policyProperty.id, date: '2026-01-01', competitor_avg_price: policyProperty.base_price * 1.2, local_event_score: 1, seasonality_score: 1, demand_score: 1 }];
     const expectedDeterministic = calculateRuleBasedPricing(policyProperty, highSignals);
     let authoritativePrice: number | undefined;
     setPricingActivityDependencies({ rentalDataRepository: { findPropertyById: async () => policyProperty, listMarketSignals: async () => highSignals }, provider: { getRecommendation: async (deterministic) => { authoritativePrice = deterministic.recommended_price; return { recommended_price: deterministic.recommended_price, explanation: 'Policy-conflict test metadata.', confidence_score: 0.8, risk_level: 'low' }; } } });
-    const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', { taskQueue: temporalTaskQueue, workflowId: pricingWorkflowId(policyConflictRequest), args: [policyConflictRequest] });
+    const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', { taskQueue: temporalTaskQueue, workflowId: pricingWorkflowId(policyBoundaryRequest), args: [policyBoundaryRequest] });
     const result = await handle.result();
-    const status = await (await import('database')).createRecommendationWorkflowRepository().getStatus(policyConflictRequest);
-    const [recommendation] = await db.select().from(pricingRecommendations).where(and(eq(pricingRecommendations.property_id, policyConflictRequest.property_id), eq(pricingRecommendations.pricing_date, policyConflictRequest.pricing_date))).limit(1);
-    expect.soft(result).toEqual({ status: 'rejected', issue_codes: ['authoritative_result_exceeds_30_percent'] });
-    expect.soft(status).toMatchObject({ status: 'rejected', issue_codes: ['authoritative_result_exceeds_30_percent'], recommendation: null });
-    expect.soft(recommendation).toBeUndefined();
-    expect.soft(expectedDeterministic.adjustments.total).toBeGreaterThan(0.3);
-    expect.soft(expectedDeterministic.adjustments.total).toBeLessThanOrEqual(0.35);
+    const status = await (await import('database')).createRecommendationWorkflowRepository().getStatus(policyBoundaryRequest);
+    const [recommendation] = await db.select().from(pricingRecommendations).where(and(eq(pricingRecommendations.property_id, policyBoundaryRequest.property_id), eq(pricingRecommendations.pricing_date, policyBoundaryRequest.pricing_date))).limit(1);
+    expect.soft(result).toEqual({ status: 'accepted', issue_codes: [] });
+    expect.soft(status).toMatchObject({ status: 'accepted', issue_codes: [], recommendation: { deterministic: expectedDeterministic } });
+    expect.soft(recommendation).toBeDefined();
+    expect.soft(expectedDeterministic.adjustments.total).toBe(0.3);
     expect.soft(authoritativePrice).toBe(expectedDeterministic.recommended_price);
   }, 20_000);
 

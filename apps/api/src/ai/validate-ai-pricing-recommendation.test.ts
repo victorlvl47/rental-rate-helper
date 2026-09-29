@@ -103,20 +103,20 @@ describe('validateAiPricingRecommendation', () => {
     });
   });
 
-  it('classifies an authoritative deterministic result above the 30% business limit without changing it', () => {
-    const policyConflict = ruleBasedPricingResultSchema.parse({
+  it('accepts an authoritative deterministic result at the 30% business limit', () => {
+    const policyBoundary = ruleBasedPricingResultSchema.parse({
       ...ruleBasedPricing,
-      minimum_recommended_price: 128.25,
-      recommended_price: 135,
-      maximum_recommended_price: 141.75,
-      adjustments: { ...ruleBasedPricing.adjustments, total: 0.35 },
+      minimum_recommended_price: 123.5,
+      recommended_price: 130,
+      maximum_recommended_price: 136.5,
+      adjustments: { ...ruleBasedPricing.adjustments, total: 0.3 },
     });
-    const recommendation = { ...validRecommendation, recommended_price: 135 };
+    const recommendation = { ...validRecommendation, recommended_price: 130 };
 
-    expect(validateAiPricingRecommendation(property, policyConflict, recommendation)).toEqual({
-      valid: false,
-      issue_codes: ['authoritative_result_exceeds_30_percent'],
+    expect(validateAiPricingRecommendation(property, policyBoundary, recommendation)).toEqual({
+      valid: true,
+      recommendation,
     });
-    expect(policyConflict.recommended_price).toBe(135);
+    expect(policyBoundary.recommended_price).toBe(130);
   });
 });

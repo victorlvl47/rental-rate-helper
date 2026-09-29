@@ -11,7 +11,7 @@ const ruleBasedPricingAdjustmentsSchema = z
     competitor: adjustmentPercentageSchema.min(-0.1).max(0.1),
     seasonality: adjustmentPercentageSchema.min(-0.05).max(0.05),
     local_event: adjustmentPercentageSchema.min(-0.05).max(0.05),
-    total: adjustmentPercentageSchema.min(-0.35).max(0.35),
+    total: adjustmentPercentageSchema.min(-0.35).max(0.3),
   })
   .strict();
 

@@ -63,7 +63,7 @@ describe('calculateRuleBasedPricing', () => {
       [withSignal({ competitor_avg_price: 0, demand_score: 0, seasonality_score: 0, local_event_score: 0 })],
     );
 
-    expect(positive.adjustments.total).toBe(0.35);
+    expect(positive.adjustments.total).toBe(0.3);
     expect(negative.adjustments.total).toBe(-0.35);
   });
 

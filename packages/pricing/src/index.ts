@@ -13,7 +13,9 @@ export function calculateRuleBasedPricing(property: Property, signals: readonly 
   const competitor = used && property.base_price > 0 ? clamp((average(signals, s => s.competitor_avg_price) - property.base_price) / property.base_price, -.2, .2) * .5 : 0;
   const seasonality = used ? (average(signals, s => s.seasonality_score) - .5) * .1 : 0;
   const localEvent = used ? (average(signals, s => s.local_event_score) - .5) * .1 : 0;
-  const total = clamp(occupancy + demand + competitor + seasonality + localEvent, -.35, .35);
+  // The deterministic engine must never create a price that validation would
+  // reject for exceeding the documented 30% increase limit.
+  const total = clamp(occupancy + demand + competitor + seasonality + localEvent, -.35, .3);
   const raw = property.base_price * (1 + total);
   return { property_id: property.id, signal_count: signals.length, market_signals_used: used, base_price: property.base_price, minimum_recommended_price: cents(clamp(raw * .95, property.min_price, property.max_price)), recommended_price: cents(clamp(raw, property.min_price, property.max_price)), maximum_recommended_price: cents(clamp(raw * 1.05, property.min_price, property.max_price)), adjustments: { occupancy, demand, competitor, seasonality, local_event: localEvent, total } };
 }

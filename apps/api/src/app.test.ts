@@ -471,22 +471,22 @@ describe('AI pricing preview route', () => {
     });
   });
 
-  it('safely rejects an authoritative deterministic result above the 30% policy limit', async () => {
-    const policyConflictPricing = ruleBasedPricingResultSchema.parse({
+  it('accepts an authoritative deterministic result at the 30% policy limit', async () => {
+    const policyBoundaryPricing = ruleBasedPricingResultSchema.parse({
       ...calculateRuleBasedPricing(property, signals),
       minimum_recommended_price: 237.5,
-      recommended_price: 240.51,
-      maximum_recommended_price: 243.5,
+      recommended_price: 240.5,
+      maximum_recommended_price: 240.5,
       adjustments: {
         occupancy: 0.2,
         demand: 0.1,
         competitor: 0.1,
         seasonality: 0.05,
         local_event: 0.05,
-        total: 0.35,
+        total: 0.3,
       },
     });
-    const pricingCalculator = vi.fn(() => policyConflictPricing);
+    const pricingCalculator = vi.fn(() => policyBoundaryPricing);
     const app = createTestApp(
       {},
       {
@@ -506,14 +506,14 @@ describe('AI pricing preview route', () => {
       url: `/properties/${property.id}/ai-pricing-preview`,
     });
 
-    expect(response.statusCode).toBe(422);
-    expect(aiPricingValidationRejectionResponseSchema.parse(response.json())).toEqual({
-      error: 'Recommendation rejected.',
-      issue_codes: ['authoritative_result_exceeds_30_percent'],
+    expect(response.statusCode).toBe(200);
+    expect(aiPricingPreviewResponseSchema.parse(response.json())).toMatchObject({
+      rule_based_pricing: { recommended_price: 240.5, adjustments: { total: 0.3 } },
+      ai_recommendation: { recommended_price: 240.5 },
     });
     expect(pricingCalculator).toHaveBeenCalledTimes(1);
     expect(pricingCalculator).toHaveBeenCalledWith(property, signals);
-    expect(policyConflictPricing.recommended_price).toBe(240.51);
+    expect(policyBoundaryPricing.recommended_price).toBe(240.5);
   });
 
   it.each([

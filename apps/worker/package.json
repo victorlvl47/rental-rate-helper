@@ -10,7 +10,7 @@
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "start": "node dist/worker.js",
     "temporal:smoke": "node dist/smoke-client.js",
-    "test": "vitest run --exclude src/integration/**",
+    "test": "vitest run src --exclude src/integration/**",
     "test:temporal-retry": "pnpm --filter shared build && pnpm --filter pricing build && pnpm --filter database build && vitest run src/integration/temporal-pricing-retry.integration.test.ts"
   },
   "dependencies": {
