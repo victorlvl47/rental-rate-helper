@@ -14,7 +14,7 @@ import { stubAiPricingProvider } from './ai/stub-ai-pricing-provider.js';
 import { createApp, type ApiDependencies } from './app.js';
 import { calculateRuleBasedPricing } from './pricing/rule-based-pricing.js';
 import type { RentalDataRepository } from './rental-data-repository.js';
-import type { RecommendationWorkflowRepository } from 'database';
+import { calculateDashboardAggregate, type RecommendationWorkflowRepository } from 'database';
 import type { PricingWorkflowClient } from './temporal/pricing-workflow-client.js';
 
 const property: Property = {
@@ -590,4 +590,15 @@ describe('AI pricing preview route', () => {
     expect(listMarketSignals).toHaveBeenCalledWith(property.id);
     expect(writePricingRecommendation).not.toHaveBeenCalled();
   });
+});
+
+it('returns mixed-status dashboard aggregates without conflating failures and validation rejections', async () => {
+  const app = appWithDashboardRepository({ getDashboardSummary: async () => ({ total_workflow_requests: 7, accepted_recommendations: 2, failed_workflows: 3, validation_rejections: 2, validation_pass_rate: 0.5, average_ai_latency_ms: 25, estimated_ai_cost_usd: 0.91, recent_failed_workflows: [{ property_id: property.id, property_name: property.name, pricing_date: '2026-09-14', status: 'failed' as const, failure_code: 'PROVIDER_FAILURE', failed_at: '2026-09-14T00:00:00.000Z' }] }) });
+  const response = await app.inject({ method: 'GET', url: '/dashboard/summary' });
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({ total_workflow_requests: 7, accepted_recommendations: 2, failed_workflows: 3, validation_rejections: 2, validation_pass_rate: 0.5, estimated_ai_cost_usd: 0.91 });
+});
+
+it('calculates mixed-status dashboard aggregates with failed costs included and failed latency excluded', () => {
+  expect(calculateDashboardAggregate([{ status: 'accepted' }, { status: 'accepted' }, { status: 'rejected' }, { status: 'rejected' }, { status: 'failed' }, { status: 'failed' }, { status: 'failed' }], [{ success: 1, latency_ms: 10, estimated_cost_usd: '0.20' }, { success: 1, latency_ms: 30, estimated_cost_usd: '0.30' }, { success: 0, latency_ms: 500, estimated_cost_usd: '0.41' }])).toEqual({ total_workflow_requests: 7, accepted_recommendations: 2, failed_workflows: 3, validation_rejections: 2, validation_pass_rate: 0.5, average_ai_latency_ms: 20, estimated_ai_cost_usd: 0.91 });
 });

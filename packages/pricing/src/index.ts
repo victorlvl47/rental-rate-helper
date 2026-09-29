@@ -31,7 +31,7 @@ export function createConfiguredAiPricingProvider(options: ConfiguredAiPricingPr
   if (environment.AI_PROVIDER !== 'openai') throw new Error('AI_PROVIDER must be either "stub" or "openai".');
   const apiKey = environment.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error('OPENAI_API_KEY must be configured when AI_PROVIDER is "openai".');
-  const model = environment.OPENAI_MODEL?.trim() || 'gpt-5.6';
+  const model = environment.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
   const fetch = options.fetch ?? ((globalThis as { fetch?: FetchLike }).fetch?.bind(globalThis));
   if (!fetch) throw new Error('Fetch is unavailable for the OpenAI provider.');
   return createOpenAiProvider({ apiKey, model, fetch });

@@ -20,7 +20,7 @@ async function run(): Promise<void> {
   let connection: NativeConnection | undefined;
 
   function shutdown(signal: NodeJS.Signals): void {
-    console.info(`Received ${signal}; shutting down Temporal worker`);
+    console.info(JSON.stringify({ level: 'info', service: 'worker', component: 'temporal', event: 'worker_shutdown_requested', signal }));
     worker?.shutdown();
   }
 
@@ -28,7 +28,7 @@ async function run(): Promise<void> {
   process.once('SIGTERM', () => shutdown('SIGTERM'));
 
   try {
-    console.info(`Connecting Temporal worker to ${temporalAddress} on task queue ${temporalTaskQueue}`);
+    console.info(JSON.stringify({ level: 'info', service: 'worker', component: 'temporal', event: 'temporal_connecting' }));
     connection = await NativeConnection.connect({ address: temporalAddress });
 
     worker = await Worker.create({
@@ -38,7 +38,7 @@ async function run(): Promise<void> {
       workflowsPath: workflowPath,
     });
 
-    console.info(`Temporal worker is polling task queue ${temporalTaskQueue}`);
+    console.info(JSON.stringify({ level: 'info', service: 'worker', component: 'temporal', event: 'temporal_worker_polling' }));
     await worker.run();
   } catch (error) {
     captureUnexpected(error, { service: "worker", component: "temporal", event: "temporal_connection_failed" });

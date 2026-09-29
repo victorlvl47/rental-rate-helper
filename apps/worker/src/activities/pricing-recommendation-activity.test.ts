@@ -1,5 +1,6 @@
 import { ApplicationFailure } from '@temporalio/workflow';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createConfiguredAiPricingProvider } from 'pricing';
 import { callPricingAi, loadPricingData, setPricingActivityDependencies } from './pricing-recommendation-activity.js';
 import type { PricingWorkflowRequest, RuleBasedPricingResult } from 'shared';
 
@@ -19,3 +20,11 @@ describe('pricing activities', () => {
     await expect(callPricingAi(request, deterministic)).rejects.toMatchObject({ type: 'PROVIDER_FAILURE', nonRetryable: false });
   });
 });
+
+  it('persists a known failed-provider cost for dashboard totals', async () => {
+    const saveMetrics = vi.fn(async () => undefined);
+    const provider = createConfiguredAiPricingProvider({ environment: { AI_PROVIDER: 'openai', OPENAI_API_KEY: 'test-key' }, fetch: async () => ({ ok: true, json: async () => ({ usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 }, output: [] }) }) });
+    setPricingActivityDependencies({ repository: { ...repository, saveMetrics }, provider });
+    await expect(callPricingAi(request, deterministic)).rejects.toMatchObject({ type: 'PROVIDER_FAILURE' });
+    expect(saveMetrics).toHaveBeenCalledWith(request, expect.objectContaining({ model: 'gpt-4o-mini', input_tokens: 1_000_000, output_tokens: 1_000_000, estimated_cost_usd: 0.75, success: false }));
+  });

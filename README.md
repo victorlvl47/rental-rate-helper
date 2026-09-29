@@ -50,7 +50,7 @@ TEMPORAL_TASK_QUEUE=rental-rate-helper
 AI_PROVIDER=stub
 # Required only when AI_PROVIDER=openai. Never commit a real key.
 OPENAI_API_KEY=
-# Optional; defaults to gpt-5.6.
+# Optional; defaults to gpt-4o-mini, which is in the checked-in local pricing table.
 OPENAI_MODEL=
 ```
 
