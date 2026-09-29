@@ -12,6 +12,7 @@ import {
   dashboardSummarySchema,
   pricingWorkflowId,
   pricingWorkflowRequestSchema,
+  type PricingWorkflowRequest,
 } from 'shared';
 import type { AiPricingProvider } from './ai/ai-pricing-provider.js';
 import { createAiPricingProvider } from './ai/config.js';
@@ -160,13 +161,13 @@ export function createApp(options: CreateAppOptions = {}) {
   app.post<{ Params: { propertyId: string }; Body: { pricing_date?: unknown } }>('/properties/:propertyId/pricing-recommendations', async (request, reply) => {
     const parsed = pricingWorkflowRequestSchema.safeParse({ property_id: request.params.propertyId, pricing_date: request.body?.pricing_date });
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid property ID or pricing date.' });
-    try { const started = await dependencies.pricingWorkflowClient.startOrResolve(parsed.data); return reply.code(started.started ? 202 : 200).send({ workflow_id: started.workflow_id, status: 'pending', already_started: !started.started }); } catch (error) { reportApiFailure(app, 'pricing_workflow_start_failed', 'temporal'); const code = getErrorCode(error); app.log.error({ temporalStartError: { name: getErrorName(error), ...(code ? { code } : {}), address: temporalAddress, workflow_id: pricingWorkflowId(parsed.data) } }, 'Pricing workflow start failed'); return reply.code(503).send({ error: 'Service unavailable.' }); }
+    try { const started = await dependencies.pricingWorkflowClient.startOrResolve(parsed.data); return reply.code(started.started ? 202 : 200).send({ workflow_id: started.workflow_id, status: 'pending', already_started: !started.started }); } catch (error) { reportApiFailure(app, 'pricing_workflow_start_failed', 'temporal', pricingCorrelation(parsed.data)); const code = getErrorCode(error); app.log.error({ temporalStartError: { name: getErrorName(error), ...(code ? { code } : {}), address: temporalAddress, workflow_id: pricingWorkflowId(parsed.data) } }, 'Pricing workflow start failed'); return reply.code(503).send({ error: 'Service unavailable.' }); }
   });
 
   app.get<{ Params: { propertyId: string }; Querystring: { pricing_date?: unknown } }>('/properties/:propertyId/pricing-recommendations/status', async (request, reply) => {
     const parsed = pricingWorkflowRequestSchema.safeParse({ property_id: request.params.propertyId, pricing_date: request.query.pricing_date });
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid property ID or pricing date.' });
-    try { const status = await dependencies.recommendationWorkflowRepository.getStatus(parsed.data); return status ? status : reply.code(404).send({ error: 'Pricing request not found.' }); } catch { reportApiFailure(app, 'pricing_status_failed', 'database'); return reply.code(503).send({ error: 'Service unavailable.' }); }
+    try { const status = await dependencies.recommendationWorkflowRepository.getStatus(parsed.data); return status ? status : reply.code(404).send({ error: 'Pricing request not found.' }); } catch { reportApiFailure(app, 'pricing_status_failed', 'database', pricingCorrelation(parsed.data)); return reply.code(503).send({ error: 'Service unavailable.' }); }
   });
 
   app.get<{ Params: { propertyId: string } }>(
@@ -253,7 +254,9 @@ export function createApp(options: CreateAppOptions = {}) {
   return app;
 }
 
-function reportApiFailure(app: ReturnType<typeof Fastify>, event: string, failure_type: string): void { app.log.error({ level: 'error', service: 'api', component: 'http', event, failure_type }, event); captureUnexpected(undefined, { service: 'api', component: 'http', event, failure_type }); }
+type SafePricingCorrelation = { workflow_id?: string; property_id?: string; pricing_date?: string };
+function pricingCorrelation(request: PricingWorkflowRequest): SafePricingCorrelation { return { workflow_id: pricingWorkflowId(request), property_id: request.property_id, pricing_date: request.pricing_date }; }
+function reportApiFailure(app: ReturnType<typeof Fastify>, event: string, failure_type: string, correlation: SafePricingCorrelation = {}): void { app.log.error({ level: 'error', service: 'api', component: 'http', event, failure_type, ...correlation }, event); captureUnexpected(undefined, { service: 'api', component: 'http', event, failure_type, ...correlation }); }
 
 const propertyIdSchema = propertySchema.shape.id;
 

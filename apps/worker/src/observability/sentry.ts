@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/node';
 
 type SafeContext = Record<string, string | undefined>;
-const allowedContextKeys = new Set(['service', 'component', 'event', 'failure_type']);
+const allowedContextKeys = new Set(['service', 'component', 'event', 'failure_type', 'workflow_id', 'property_id', 'pricing_date']);
 let enabled = false;
 
 export function sanitizeSentryEvent(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
