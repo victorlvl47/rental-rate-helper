@@ -8,6 +8,8 @@ import {
   RENTAL_MARKETS,
   rentalMarketSchema,
   calendarDateSchema,
+  dashboardRecommendationSchema,
+  dashboardSummarySchema,
   pricingWorkflowId,
   pricingWorkflowRequestSchema,
 } from 'shared';
@@ -83,6 +85,26 @@ export function createApp(options: CreateAppOptions = {}) {
   });
 
   app.get('/markets', async () => RENTAL_MARKETS);
+
+  app.get('/dashboard/summary', async (_request, reply) => {
+    try {
+      return dashboardSummarySchema.parse(await dependencies.recommendationWorkflowRepository.getDashboardSummary());
+    } catch (error) {
+      const code = getErrorCode(error);
+      app.log.error({ databaseError: { name: getErrorName(error), ...(code ? { code } : {}) } }, 'Dashboard summary query failed');
+      return reply.code(503).send({ error: 'Service unavailable.' });
+    }
+  });
+
+  app.get('/recommendations', async (_request, reply) => {
+    try {
+      return dashboardRecommendationSchema.array().parse(await dependencies.recommendationWorkflowRepository.listAcceptedRecommendations());
+    } catch (error) {
+      const code = getErrorCode(error);
+      app.log.error({ databaseError: { name: getErrorName(error), ...(code ? { code } : {}) } }, 'Recommendation list query failed');
+      return reply.code(503).send({ error: 'Service unavailable.' });
+    }
+  });
 
   app.get<{ Querystring: { city?: unknown } }>('/properties', async (request, reply) => {
     const parsedCity = rentalMarketSchema.safeParse(request.query.city);

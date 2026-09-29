@@ -1,0 +1,8 @@
+import Link from 'next/link';
+import type { WorkflowResult } from '../lib/api';
+
+export function WorkflowStatusCard({ result, duplicate }: { result: WorkflowResult; duplicate: boolean }) {
+  const terminal = result.status === 'accepted' || result.status === 'rejected' || result.status === 'failed';
+  const title = result.status === 'accepted' ? 'Recommendation accepted' : result.status === 'rejected' ? 'Recommendation rejected' : result.status === 'failed' ? 'Workflow failed safely' : result.status === 'running' ? 'Generating recommendation' : 'Request is pending';
+  return <section className="status-card" aria-live="polite"><p className="eyebrow">{duplicate ? 'Existing workflow reused' : 'Pricing workflow'}</p><h3>{title}</h3><p>{duplicate ? 'An existing request for this property and date is being used.' : terminal ? 'This workflow has reached a final state.' : 'The dashboard checks its safe status periodically.'}</p>{result.status === 'accepted' && result.recommendation ? <div className="mt-3"><strong>Authoritative price: ${result.recommendation.deterministic.recommended_price.toFixed(2)}</strong><p className="mt-1">AI explanation: {result.recommendation.ai_metadata.explanation}</p><Link className="text-link" href={`/recommendations?property=${result.property_id}`}>View saved recommendations</Link></div> : null}{result.status === 'rejected' ? <p className="mt-3">Validation did not accept the AI metadata. {result.issue_codes.length ? `Checks: ${result.issue_codes.join(', ')}.` : ''}</p> : null}{result.status === 'failed' ? <p className="mt-3">The request could not be completed. No internal error details are shown.</p> : null}</section>;
+}

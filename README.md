@@ -91,6 +91,33 @@ Temporal:        localhost:7233
 Temporal Web UI: http://localhost:8233
 ```
 
+## Dashboard (Epic 7)
+
+With PostgreSQL migrated and seeded, run the API, Temporal worker, and web app
+together with `pnpm dev` (or run their existing individual `dev` commands in
+separate terminals). Open `http://localhost:3000`; it redirects to
+`/dashboard`.
+
+The dashboard routes are:
+
+- `/dashboard` — safe operational counts, AI metrics when available, and recent failed workflows.
+- `/properties` — choose one of the four seeded markets and a calendar date, then start a durable pricing workflow.
+- `/recommendations` — accepted, persisted deterministic prices with validated AI metadata.
+- `/evals` — instructions for the existing offline validation suite.
+
+For a short recruiter demo, seed the database, open `/properties`, select a
+market and today (or a fresh date), then choose **Generate recommendation**.
+The page immediately shows pending/running status and polls the safe status
+endpoint until accepted, rejected, or failed. Repeating the same property/date
+is normal: the existing workflow or result is reused and the dashboard says so.
+Open `/recommendations` to review accepted results. The displayed nightly price
+and range are always deterministic; AI provides only explanation, confidence,
+and risk metadata.
+
+Dashboard reads use `GET /dashboard/summary` and `GET /recommendations`. Both
+are read-only, return intentional safe fields only, and never expose provider,
+Temporal, or database details.
+
 Confirm the API and PostgreSQL connection:
 
 ```bash

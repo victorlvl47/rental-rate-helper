@@ -3,8 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "RentalRateHelper",
-  description:
-    "A dashboard foundation for analyzing rental markets and planning competitive nightly rates.",
+  description: "Operate durable rental pricing workflows and review deterministic recommendations.",
 };
 
 export default function RootLayout({
