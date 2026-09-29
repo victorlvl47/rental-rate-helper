@@ -4,14 +4,14 @@ RentalRateHelper is a working local demo of a reliable dynamic-pricing workflow 
 
 The short-term-rental vertical is deliberately narrow. The architecture establishes the foundations needed before connecting real customer data: deterministic pricing rules, validated AI context, Temporal workflows, idempotency, evaluation, cost and latency tracking, and safe observability.
 
-> The deterministic engine owns every pricing decision. AI may add human-readable explanation, confidence, and risk metadata only after that metadata passes validation.
+> The deterministic engine owns every pricing decision. AI returns structured explanation, confidence, risk, and an echoed recommended price; validation requires that echoed price to exactly match the deterministic authoritative price.
 
 ## What the product demonstrates
 
 - A deterministic price and safe range based on property and market signals.
 - A durable Temporal workflow with retry behavior and a property/date idempotency key.
-- Structured AI metadata that cannot change the authoritative price.
-- Validation of output shape, explanation, confidence, risk level, property bounds, deterministic range, and the 30% maximum price-increase policy.
+- Structured AI explanation, confidence, risk, and an echoed authoritative price that cannot change the pricing decision.
+- Validation of output shape, explanation, confidence, risk level, echoed price, property bounds, deterministic range, and the 30% maximum price-increase policy. A property minimum above that cap is a safely failed pricing configuration, never an accepted contradiction.
 - PostgreSQL persistence for workflow state, recommendations, and AI-call metrics.
 - Dashboard visibility into activity, accepted recommendations, failures, validation rejections, latency, and estimated AI cost.
 - Safe structured logs and optional Sentry reporting that exclude prompts, raw provider responses, credentials, and database URLs.

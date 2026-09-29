@@ -67,6 +67,12 @@ describe('calculateRuleBasedPricing', () => {
     expect(negative.adjustments.total).toBe(-0.35);
   });
 
+  it('rejects a property minimum above the 30% maximum increase instead of producing a contradictory price', () => {
+    expect(() => calculateRuleBasedPricing(withProperty({ min_price: 130.01, max_price: 200 }), [signal])).toThrow(
+      'Property minimum price exceeds the maximum allowed price increase.',
+    );
+  });
+
   it('clamps the competitor adjustment at its bounds', () => {
     const neutralOccupancy = withProperty({ current_occupancy_rate: 0.5, target_occupancy_rate: 0.5 });
 

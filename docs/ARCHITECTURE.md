@@ -33,9 +33,9 @@ The operator-facing stack is Next.js dashboard → Fastify API → PostgreSQL an
 
 ## Pricing and validation boundary
 
-The deterministic engine calculates the authoritative recommended price and a safe range from property information and fake market signals. It caps a single price increase at 30%, matching the hard validation policy.
+The deterministic engine calculates the authoritative recommended price and a safe range from property information and fake market signals. It caps a single price increase at 30%, matching the hard validation policy. If a property minimum is above that 30% cap, the worker records a non-retryable `INVALID_PRICING_CONFIGURATION` failure before calling AI; it never creates a price that violates either constraint.
 
-AI receives the already-authoritative result and can return only explanation, confidence, and risk metadata. Validation checks the structured schema, non-empty explanation, confidence range, supported risk level, property bounds, safe range, exact price match, and the 30% policy. Invalid metadata becomes a rejected workflow result; it never changes the deterministic price.
+AI receives the already-authoritative result and returns structured explanation, confidence, risk, and an echoed `recommended_price`. Validation requires the echoed price to exactly match the deterministic authoritative price, then checks the structured schema, non-empty explanation, confidence range, supported risk level, property bounds, safe range, and the 30% policy. Invalid metadata becomes a rejected workflow result; it never changes the deterministic price.
 
 ## Reliability behavior
 

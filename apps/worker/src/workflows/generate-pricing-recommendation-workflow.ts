@@ -2,11 +2,11 @@ import { ActivityFailure, ApplicationFailure, proxyActivities } from '@temporali
 import type * as activities from '../activities/pricing-recommendation-activity.js';
 import { pricingWorkflowId, type PricingWorkflowRequest } from 'shared';
 
-const activity = proxyActivities<typeof activities>({ startToCloseTimeout: '1 minute', retry: { maximumAttempts: 3, nonRetryableErrorTypes: ['INVALID_REQUEST','PROPERTY_NOT_FOUND','VALIDATION_REJECTED'] } });
+const activity = proxyActivities<typeof activities>({ startToCloseTimeout: '1 minute', retry: { maximumAttempts: 3, nonRetryableErrorTypes: ['INVALID_REQUEST','INVALID_PRICING_CONFIGURATION','PROPERTY_NOT_FOUND','VALIDATION_REJECTED'] } });
 function terminalFailureCode(error: unknown): string {
  const cause = error instanceof ActivityFailure ? error.cause : undefined;
  const type = cause instanceof ApplicationFailure ? cause.type : undefined;
- return typeof type === 'string' && ['INVALID_REQUEST', 'PROPERTY_NOT_FOUND', 'VALIDATION_REJECTED', 'PROVIDER_FAILURE', 'PERSISTENCE_FAILURE'].includes(type) ? type : 'WORKFLOW_FAILURE';
+ return typeof type === 'string' && ['INVALID_REQUEST', 'INVALID_PRICING_CONFIGURATION', 'PROPERTY_NOT_FOUND', 'VALIDATION_REJECTED', 'PROVIDER_FAILURE', 'PERSISTENCE_FAILURE'].includes(type) ? type : 'WORKFLOW_FAILURE';
 }
 export async function GeneratePricingRecommendationWorkflow(request: PricingWorkflowRequest): Promise<{ status: 'accepted'|'rejected'|'failed'|'already_existing'; issue_codes: string[] }> {
  const workflowId = pricingWorkflowId(request);

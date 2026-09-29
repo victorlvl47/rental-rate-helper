@@ -13,7 +13,7 @@ The checked-in cases cover realistic fake-rental scenarios:
 - malformed or mismatched AI metadata is rejected;
 - confidence, risk, explanation, and schema rules are enforced.
 
-The deterministic engine has a 30% maximum increase cap. This matches the validator so an otherwise valid workflow does not create and reject its own authoritative result.
+The deterministic engine has a 30% maximum increase cap. This matches the validator so an otherwise valid workflow does not create and reject its own authoritative result. A property minimum above that cap is invalid configuration: the workflow safely fails with `INVALID_PRICING_CONFIGURATION` instead of producing a contradictory price.
 
 ## Run the offline suite
 
@@ -25,7 +25,7 @@ The suite uses static in-memory fixtures. It needs no database, Temporal service
 
 ## Workflow verification
 
-The Temporal integration suite verifies the real local workflow boundary: retry recovery and exhaustion, idempotent starts, missing properties, invalid AI output, accepted results, safe failure storage, and the accepted 30% cap boundary.
+The Temporal integration suite verifies the real local workflow boundary: retry recovery and exhaustion, idempotent starts, missing properties, invalid pricing configuration, invalid AI output, accepted results, safe failure storage, and the accepted 30% cap boundary.
 
 ```bash
 pnpm infra:up

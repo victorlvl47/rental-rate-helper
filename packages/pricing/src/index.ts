@@ -2,11 +2,27 @@ import { estimateOpenAiCostUsd, OPENAI_PRICING_TABLE_VERSION } from './model-pri
 import { aiPricingRecommendationSchema, recommendationValidationResultSchema, type AiPricingRecommendation, type MarketSignal, type Property, type RecommendationValidationIssueCode, type RecommendationValidationResult, type RuleBasedPricingResult } from 'shared';
 
 export const PRICING_PROMPT_VERSION = 'v1';
+const MAX_PRICE_INCREASE_PERCENT = 30;
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const cents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 const average = (signals: readonly MarketSignal[], select: (signal: MarketSignal) => number) => signals.reduce((sum, signal) => sum + select(signal), 0) / signals.length;
+
+export class InvalidPricingConfigurationError extends Error {
+  constructor() {
+    super('Property minimum price exceeds the maximum allowed price increase.');
+    this.name = 'InvalidPricingConfigurationError';
+  }
+}
+
+function minimumExceedsMaximumIncrease(property: Property): boolean {
+  const minimumCents = Math.round(property.min_price * 100);
+  const baseCents = Math.round(property.base_price * 100);
+  return minimumCents * 100 > baseCents * (100 + MAX_PRICE_INCREASE_PERCENT);
+}
+
 export function calculateRuleBasedPricing(property: Property, signals: readonly MarketSignal[]): RuleBasedPricingResult {
   if (signals.some((signal) => signal.property_id !== property.id)) throw new Error('Every market signal must belong to the supplied property.');
+  if (minimumExceedsMaximumIncrease(property)) throw new InvalidPricingConfigurationError();
   const occupancy = (property.target_occupancy_rate - property.current_occupancy_rate) * .2;
   const used = signals.length > 0;
   const demand = used ? (average(signals, s => s.demand_score) - .5) * .2 : 0;
@@ -15,7 +31,7 @@ export function calculateRuleBasedPricing(property: Property, signals: readonly 
   const localEvent = used ? (average(signals, s => s.local_event_score) - .5) * .1 : 0;
   // The deterministic engine must never create a price that validation would
   // reject for exceeding the documented 30% increase limit.
-  const total = clamp(occupancy + demand + competitor + seasonality + localEvent, -.35, .3);
+  const total = clamp(occupancy + demand + competitor + seasonality + localEvent, -.35, MAX_PRICE_INCREASE_PERCENT / 100);
   const raw = property.base_price * (1 + total);
   return { property_id: property.id, signal_count: signals.length, market_signals_used: used, base_price: property.base_price, minimum_recommended_price: cents(clamp(raw * .95, property.min_price, property.max_price)), recommended_price: cents(clamp(raw, property.min_price, property.max_price)), maximum_recommended_price: cents(clamp(raw * 1.05, property.min_price, property.max_price)), adjustments: { occupancy, demand, competitor, seasonality, local_event: localEvent, total } };
 }

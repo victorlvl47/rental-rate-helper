@@ -75,6 +75,11 @@ const policyBoundaryRequest: PricingWorkflowRequest = {
   pricing_date: `${String(3000 + (Date.now() % 2000)).padStart(4, '0')}-06-14`,
 };
 
+const invalidPricingConfigurationRequest: PricingWorkflowRequest = {
+  property_id: '10000000-0000-4000-8000-000000000001',
+  pricing_date: `${String(4000 + (Date.now() % 2000)).padStart(4, '0')}-05-13`,
+};
+
 const malformedWorkflowId = `malformed-pricing-request-${process.pid}-${Date.now()}`;
 
 let worker: Worker | undefined;
@@ -86,6 +91,7 @@ let retryableFailureProviderCalls = 0;
 let missingPropertyLoadAttempts = 0;
 let missingPropertyProviderCalls = 0;
 let invalidAiOutputProviderCalls = 0;
+let invalidPricingConfigurationProviderCalls = 0;
 let malformedProviderCalls = 0;
 let databaseReady = false;
 
@@ -240,7 +246,7 @@ afterAll(async () => {
     try {
       if (!databaseReady) return;
 
-      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest, concurrentStartRequest, activeDuplicateRequest, policyBoundaryRequest]) {
+      for (const scopedRequest of [request, retryableFailureRequest, missingPropertyRequest, invalidAiOutputRequest, concurrentStartRequest, activeDuplicateRequest, policyBoundaryRequest, invalidPricingConfigurationRequest]) {
         const requestFilter = and(
           eq(pricingWorkflowRequests.property_id, scopedRequest.property_id),
           eq(pricingWorkflowRequests.pricing_date, scopedRequest.pricing_date),
@@ -521,6 +527,43 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     expect.soft(recommendationCount).toBe(0);
     expect.soft(metricsCount).toBe(0);
     expect.soft(JSON.stringify(status ?? {})).not.toMatch(/database|provider|Property not found/i);
+  }, 20_000);
+
+  it('fails an incompatible property price floor before calling AI or persisting a recommendation', async () => {
+    invalidPricingConfigurationProviderCalls = 0;
+    const property = await databaseRentalDataRepository().findPropertyById(invalidPricingConfigurationRequest.property_id);
+    if (!property) throw new Error('Seeded invalid-configuration property is required.');
+    const invalidProperty = { ...property, min_price: Math.round((property.base_price * 1.3 + 0.01) * 100) / 100 } as Property;
+    setPricingActivityDependencies({
+      rentalDataRepository: { findPropertyById: async () => invalidProperty, listMarketSignals: async () => [] },
+      provider: { getRecommendation: async () => { invalidPricingConfigurationProviderCalls += 1; throw new Error('must not call provider'); } },
+    });
+
+    const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', {
+      taskQueue: temporalTaskQueue,
+      workflowId: pricingWorkflowId(invalidPricingConfigurationRequest),
+      args: [invalidPricingConfigurationRequest],
+    });
+    const workflowResult = await handle.result();
+    const status = await (await import('database')).createRecommendationWorkflowRepository().getStatus(invalidPricingConfigurationRequest);
+    const requestFilter = and(
+      eq(pricingWorkflowRequests.property_id, invalidPricingConfigurationRequest.property_id),
+      eq(pricingWorkflowRequests.pricing_date, invalidPricingConfigurationRequest.pricing_date),
+    );
+    const [{ recommendationCount }] = await db.select({ recommendationCount: count() }).from(pricingRecommendations).where(and(
+      eq(pricingRecommendations.property_id, invalidPricingConfigurationRequest.property_id),
+      eq(pricingRecommendations.pricing_date, invalidPricingConfigurationRequest.pricing_date),
+    ));
+    const [{ metricsCount }] = await db.select({ metricsCount: count() }).from(aiCallMetrics).innerJoin(pricingWorkflowRequests, eq(aiCallMetrics.request_id, pricingWorkflowRequests.id)).where(requestFilter);
+    const history = await handle.fetchHistory();
+    const calculationAttempts = (history.events ?? []).filter((event) => event.activityTaskScheduledEventAttributes?.activityType?.name === 'calculatePricing');
+
+    expect.soft(workflowResult).toEqual({ status: 'failed', issue_codes: [] });
+    expect.soft(status).toMatchObject({ status: 'failed', failure_code: 'INVALID_PRICING_CONFIGURATION', issue_codes: [], recommendation: null, metrics: null });
+    expect.soft(invalidPricingConfigurationProviderCalls).toBe(0);
+    expect.soft(calculationAttempts).toHaveLength(1);
+    expect.soft(recommendationCount).toBe(0);
+    expect.soft(metricsCount).toBe(0);
   }, 20_000);
 
   it('rejects invalid AI metadata without retrying or persisting a recommendation', async () => {

@@ -1,12 +1,12 @@
 import { ApplicationFailure } from '@temporalio/workflow';
 import { asc, eq } from 'drizzle-orm';
 import { createRecommendationWorkflowRepository, db, marketSignals, properties, type RecommendationWorkflowRepository } from 'database';
-import { calculateRuleBasedPricing, createConfiguredAiPricingProvider, getProviderFailureMetrics, PRICING_PROMPT_VERSION, type AiPricingProvider, validateAiPricingRecommendation } from 'pricing';
+import { calculateRuleBasedPricing, createConfiguredAiPricingProvider, getProviderFailureMetrics, InvalidPricingConfigurationError, PRICING_PROMPT_VERSION, type AiPricingProvider, validateAiPricingRecommendation } from 'pricing';
 import type { AiCallMetrics, PricingWorkflowData, PricingWorkflowRequest, PricingWorkflowStatus } from 'shared';
 import { marketSignalSchema, pricingWorkflowId, pricingWorkflowRequestSchema, propertySchema, type MarketSignal, type Property } from 'shared';
 import { captureUnexpected } from '../observability/sentry.js';
 
-export type PricingFailureType = 'INVALID_REQUEST' | 'PROPERTY_NOT_FOUND' | 'VALIDATION_REJECTED' | 'PROVIDER_FAILURE' | 'PERSISTENCE_FAILURE';
+export type PricingFailureType = 'INVALID_REQUEST' | 'INVALID_PRICING_CONFIGURATION' | 'PROPERTY_NOT_FOUND' | 'VALIDATION_REJECTED' | 'PROVIDER_FAILURE' | 'PERSISTENCE_FAILURE';
 const terminalFailure = (message: string, type: PricingFailureType) => ApplicationFailure.nonRetryable(message, type);
 const transientFailure = (message: string, type: PricingFailureType) => ApplicationFailure.retryable(message, type);
 
@@ -31,7 +31,7 @@ export async function recordWorkflowCompleted(request: PricingWorkflowRequest, s
 export async function resolvePricingRequest(request: PricingWorkflowRequest, workflowId: string) { const parsed = pricingWorkflowRequestSchema.safeParse(request); if (!parsed.success) throw terminalFailure('Pricing request is invalid.', 'INVALID_REQUEST'); try { return await dependencies.repository.createOrResolve(parsed.data, workflowId); } catch { reportFailure('request_persistence_failed', 'database', request); throw transientFailure('Pricing request persistence failed.', 'PERSISTENCE_FAILURE'); } }
 export async function markPricingStatus(request: PricingWorkflowRequest, status: PricingWorkflowStatus, issueCodes: string[] = [], failureCode?: string) { try { await dependencies.repository.updateStatus(request, status, issueCodes, failureCode); } catch { reportFailure('status_persistence_failed', 'database', request); throw transientFailure('Pricing request persistence failed.', 'PERSISTENCE_FAILURE'); } }
 export async function loadPricingData(request: PricingWorkflowRequest): Promise<Omit<PricingWorkflowData, 'deterministic'>> { try { const property = await dependencies.rentalDataRepository.findPropertyById(request.property_id); if (!property) throw terminalFailure('Property not found.', 'PROPERTY_NOT_FOUND'); return { property, signals: await dependencies.rentalDataRepository.listMarketSignals(request.property_id) }; } catch (error) { if (error instanceof ApplicationFailure) throw error; reportFailure('pricing_data_load_failed', 'database', request); throw transientFailure('Pricing data load failed.', 'PERSISTENCE_FAILURE'); } }
-export async function calculatePricing(data: Omit<PricingWorkflowData, 'deterministic'>): Promise<PricingWorkflowData> { try { return { ...data, deterministic: calculateRuleBasedPricing(data.property, data.signals) }; } catch { throw terminalFailure('Pricing request is invalid.', 'INVALID_REQUEST'); } }
+export async function calculatePricing(data: Omit<PricingWorkflowData, 'deterministic'>): Promise<PricingWorkflowData> { try { return { ...data, deterministic: calculateRuleBasedPricing(data.property, data.signals) }; } catch (error) { if (error instanceof InvalidPricingConfigurationError) throw terminalFailure('Pricing configuration is invalid.', 'INVALID_PRICING_CONFIGURATION'); throw terminalFailure('Pricing request is invalid.', 'INVALID_REQUEST'); } }
 export async function callPricingAi(request: PricingWorkflowRequest, deterministic: PricingWorkflowData['deterministic']): Promise<{ output: unknown; metrics: AiCallMetrics }> {
   const started = Date.now();
   logEvent('info', 'ai_request_started', correlation(request));
