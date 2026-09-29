@@ -589,7 +589,7 @@ describe.sequential('Temporal pricing retry recovery (local integration)', () =>
     malformedProviderCalls = 0;
     let repositoryCalls = 0;
     setPricingActivityDependencies({
-      repository: { createOrResolve: async () => { repositoryCalls += 1; throw new Error('must not persist malformed input'); }, updateStatus: async () => undefined, saveAccepted: async () => 'unused', saveMetrics: async () => undefined, getStatus: async () => undefined, listAcceptedRecommendations: async () => [], getDashboardSummary: async () => ({ total_properties: 0, accepted_recommendations: 0, average_ai_latency_ms: null, estimated_ai_cost_usd: null, validation_failures: 0, recent_failed_workflows: [] }) },
+      repository: { createOrResolve: async () => { repositoryCalls += 1; throw new Error('must not persist malformed input'); }, updateStatus: async () => undefined, saveAccepted: async () => 'unused', saveMetrics: async () => undefined, getStatus: async () => undefined, listAcceptedRecommendations: async () => [], getDashboardSummary: async () => ({ total_workflow_requests: 0, accepted_recommendations: 0, failed_workflows: 0, validation_rejections: 0, validation_pass_rate: null, average_ai_latency_ms: null, estimated_ai_cost_usd: null, recent_failed_workflows: [] }) },
       provider: { getRecommendation: async () => { malformedProviderCalls += 1; throw new Error('must not call provider'); } },
     });
     const handle = await client!.workflow.start('GeneratePricingRecommendationWorkflow', { taskQueue: temporalTaskQueue, workflowId: malformedWorkflowId, args: [{ property_id: 'not-a-uuid', pricing_date: '2099-01-01' } as unknown as PricingWorkflowRequest] });

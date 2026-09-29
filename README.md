@@ -105,7 +105,7 @@ The dashboard routes are:
 - `/recommendations` — accepted, persisted deterministic prices with validated AI metadata.
 - `/evals` — instructions for the existing offline validation suite.
 
-For a short recruiter demo, seed the database, open `/properties`, select a
+For a short demo, seed the database, open `/properties`, select a
 market and today (or a fresh date), then choose **Generate recommendation**.
 The page immediately shows pending/running status and polls the safe status
 endpoint until accepted, rejected, or failed. Repeating the same property/date
@@ -506,3 +506,16 @@ pnpm infra:down
 - [ ] Confirm its successful result and find the workflow ID in Temporal Web UI.
 - [ ] Run `pnpm build` and `pnpm typecheck`.
 - [ ] Stop applications with `Ctrl+C` and run `pnpm infra:down`.
+
+## Observability (Epic 8)
+
+The existing `/dashboard` displays total workflow requests, accepted recommendations, failed workflows, validation rejections and pass rate, average successful AI-call latency, total estimated AI cost, and recent failed workflows with only a safe category and timestamp.
+
+- Total estimated AI cost sums every stored provider attempt with known cost, including failed and retried attempts.
+- Average AI-call latency uses only successful provider attempts.
+- Validation rejection is an expected safety result and is kept separate from failed workflows.
+- The local stub has no token usage or cost; these values remain `null`.
+
+OpenAI token cost uses the checked-in `packages/pricing/src/model-pricing.ts` table (`openai-pricing-2026-09-28`, source: OpenAI API pricing page). Unknown models or missing provider usage return `null` rather than an invented estimate. Update that one versioned table when provider pricing changes.
+
+Sentry is optional. Set `SENTRY_DSN` (plus optional `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE`) in the ignored local `.env` to enable API and worker error reporting. Leaving the DSN blank keeps local development operational and sends no Sentry events. Only safe service, component, event, workflow/property/date, and failure-category context may be attached; prompts, raw provider responses, credentials, database URLs, and raw errors are not added as context.

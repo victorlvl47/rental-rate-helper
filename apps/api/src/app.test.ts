@@ -88,7 +88,7 @@ describe('pricing workflow routes', () => {
     createOrResolve: async () => { throw new Error('not used by API'); }, updateStatus: async () => undefined, saveAccepted: async () => 'recommendation-id', saveMetrics: async () => undefined,
     getStatus: async (request) => ({ property_id: request.property_id, pricing_date: request.pricing_date, workflow_id: `pricing-${request.property_id}-${request.pricing_date}`, status: 'accepted', issue_codes: [], recommendation: { deterministic: calculateRuleBasedPricing(property, signals), ai_metadata: { recommended_price: calculateRuleBasedPricing(property, signals).recommended_price, explanation: 'Stored metadata.', confidence_score: 0.8, risk_level: 'low' } }, metrics: { model: 'stub', prompt_version: 'v1', input_tokens: null, output_tokens: null, estimated_cost_usd: null, latency_ms: 0, success: true } }),
     listAcceptedRecommendations: async () => [],
-    getDashboardSummary: async () => ({ total_properties: 1, accepted_recommendations: 0, average_ai_latency_ms: null, estimated_ai_cost_usd: null, validation_failures: 0, recent_failed_workflows: [] }),
+    getDashboardSummary: async () => ({ total_workflow_requests: 1, accepted_recommendations: 0, failed_workflows: 0, validation_rejections: 0, validation_pass_rate: null, average_ai_latency_ms: null, estimated_ai_cost_usd: null, recent_failed_workflows: [] }),
   };
   function appWithWorkflow(overrides: Partial<ApiDependencies> = {}) {
     const app = createApp({ logger: false, checkDatabaseConnection: async () => undefined, closeDatabase: async () => undefined, rentalDataRepository: repository, aiPricingProvider: stubAiPricingProvider, calculateRuleBasedPricing, pricingWorkflowClient: workflowClient, recommendationWorkflowRepository: workflowRepository, ...overrides }); apps.push(app); return app;
@@ -125,7 +125,7 @@ describe('dashboard read routes', () => {
     const summary = await app.inject({ method: 'GET', url: '/dashboard/summary' });
     const recommendations = await app.inject({ method: 'GET', url: '/recommendations' });
     expect(summary.statusCode).toBe(200);
-    expect(summary.json()).toMatchObject({ total_properties: 8, accepted_recommendations: 1, average_ai_latency_ms: 42 });
+    expect(summary.json()).toMatchObject({ total_workflow_requests: 8, accepted_recommendations: 1, failed_workflows: 0, validation_rejections: 0, validation_pass_rate: 1, average_ai_latency_ms: 42 });
     expect(recommendations.statusCode).toBe(200);
     expect(recommendations.json()).toHaveLength(1);
     expect(recommendations.body).not.toContain('provider payload');
@@ -141,7 +141,7 @@ describe('dashboard read routes', () => {
 
 function appWithDashboardRepository(overrides: Partial<RecommendationWorkflowRepository> = {}) {
   const recommendation = { id: '20000000-0000-4000-8000-000000000001', property_id: property.id, property_name: property.name, city: property.city, pricing_date: '2026-09-14', base_price: 185, recommended_price: 216.55, minimum_price: 205.72, maximum_price: 227.38, explanation: 'Validated AI metadata.', confidence_score: 0.8, risk_level: 'low' as const, validation_status: 'accepted', estimated_cost_usd: null, latency_ms: 42, created_at: '2026-09-14T00:00:00.000Z' };
-  const recommendationWorkflowRepository: RecommendationWorkflowRepository = { createOrResolve: async () => ({ id: 'x', workflow_id: 'x', status: 'pending', existing: false }), updateStatus: async () => undefined, saveAccepted: async () => recommendation.id, saveMetrics: async () => undefined, getStatus: async () => undefined, listAcceptedRecommendations: async () => [recommendation], getDashboardSummary: async () => ({ total_properties: 8, accepted_recommendations: 1, average_ai_latency_ms: 42, estimated_ai_cost_usd: null, validation_failures: 0, recent_failed_workflows: [] }), ...overrides };
+  const recommendationWorkflowRepository: RecommendationWorkflowRepository = { createOrResolve: async () => ({ id: 'x', workflow_id: 'x', status: 'pending', existing: false }), updateStatus: async () => undefined, saveAccepted: async () => recommendation.id, saveMetrics: async () => undefined, getStatus: async () => undefined, listAcceptedRecommendations: async () => [recommendation], getDashboardSummary: async () => ({ total_workflow_requests: 8, accepted_recommendations: 1, failed_workflows: 0, validation_rejections: 0, validation_pass_rate: 1, average_ai_latency_ms: 42, estimated_ai_cost_usd: null, recent_failed_workflows: [] }), ...overrides };
   const app = createApp({ logger: false, checkDatabaseConnection: async () => undefined, closeDatabase: async () => undefined, rentalDataRepository: repository, aiPricingProvider: stubAiPricingProvider, calculateRuleBasedPricing, pricingWorkflowClient: { startOrResolve: async () => ({ workflow_id: 'x', started: true }) }, recommendationWorkflowRepository });
   apps.push(app);
   return app;
